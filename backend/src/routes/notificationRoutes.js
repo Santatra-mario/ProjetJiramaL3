@@ -12,7 +12,11 @@ const {
 
 const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
 
-const roles = ['ADMINISTRATEUR', 'RESPONSABLE'];
+const roles = [
+  'ADMINISTRATEUR',
+  'RESPONSABLE',
+  'AGENT',
+];
 
 router.get('/', verifyToken, checkRole(...roles), getAllNotifications);
 router.get('/count', verifyToken, checkRole(...roles), getNotificationCount);

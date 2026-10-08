@@ -1,653 +1,1122 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import {
-  UserPlus,
-  User,
-  Mail,
-  Lock,
+  AlertCircle,
+  ArrowLeft,
+  BarChart3,
+  Check,
+  CheckCircle2,
+  ClipboardList,
+  Droplets,
   Eye,
   EyeOff,
-  Droplets,
-  Zap,
-  ArrowLeft,
+  Lock,
+  Mail,
   ShieldCheck,
-  AlertCircle,
-  CheckCircle,
+  User,
+  UserPlus,
+  X,
+  XCircle,
+  Zap,
 } from 'lucide-react';
 
 import axiosClient from '../api/axiosClient';
+import BoutonTheme from '../components/BoutonTheme.jsx';
+import FondJirama from '../components/FondJirama.jsx';
+import { COULEURS } from '../theme/couleurs.js';
 
+/* =========================================================
+   CONSTANTES
+========================================================= */
+const REDIRECTION_SECONDES = 3;
+const ORDRE_CHAMPS = [
+  'nom',
+  'prenom',
+  'identifiant',
+  'email',
+  'mot_de_passe',
+  'confirmation',
+  'role',
+];
+
+const FORM_INITIAL = {
+  nom: '',
+  prenom: '',
+  identifiant: '',
+  email: '',
+  mot_de_passe: '',
+  confirmation: '',
+  role: 'AGENT',
+};
+
+const REGEX_NOM = /^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'’-]*$/;
+const REGEX_IDENTIFIANT = /^[A-Za-z0-9._-]{3,30}$/;
+const REGEX_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const ROLES = [
+  {
+    valeur: 'AGENT',
+    titre: 'Agent de relevé',
+    description: 'Saisit les relevés d’eau et d’électricité.',
+    Icone: ClipboardList,
+  },
+  {
+    valeur: 'RESPONSABLE',
+    titre: 'Responsable',
+    description: 'Suit, contrôle et analyse les consommations.',
+    Icone: BarChart3,
+  },
+];
+
+/* =========================================================
+   FONCTIONS UTILITAIRES
+========================================================= */
+
+// Critères du mot de passe (affichés dans la checklist)
+const critèresMotDePasse = (mdp) => [
+  { cle: 'longueur', libelle: '8 caractères minimum', ok: mdp.length >= 8 },
+  { cle: 'majuscule', libelle: 'Une majuscule', ok: /[A-Z]/.test(mdp) },
+  { cle: 'minuscule', libelle: 'Une minuscule', ok: /[a-z]/.test(mdp) },
+  { cle: 'chiffre', libelle: 'Un chiffre', ok: /\d/.test(mdp) },
+  {
+    cle: 'special',
+    libelle: 'Un caractère spécial (conseillé)',
+    ok: /[^A-Za-z0-9]/.test(mdp),
+  },
+];
+
+// Transforme « Rakoto Mario » en « mario.rakoto » (sans accents)
+const slug = (texte) =>
+  texte
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+const suggererIdentifiant = (prenom, nom) => {
+  const p = slug(prenom.trim());
+  const n = slug(nom.trim());
+  return [p, n].filter(Boolean).join('.').slice(0, 30);
+};
+
+// Validation complète du formulaire : retourne { champ: message }
+const valider = (form) => {
+  const erreurs = {};
+
+  const nom = form.nom.trim();
+  const prenom = form.prenom.trim();
+  const identifiant = form.identifiant.trim();
+  const email = form.email.trim();
+
+  if (!nom) erreurs.nom = 'Le nom est obligatoire.';
+  else if (nom.length < 2)
+    erreurs.nom = 'Le nom doit contenir au moins 2 caractères.';
+  else if (!REGEX_NOM.test(nom))
+    erreurs.nom = 'Utilisez uniquement des lettres, espaces, tirets ou apostrophes.';
+
+  if (!prenom) erreurs.prenom = 'Le prénom est obligatoire.';
+  else if (prenom.length < 2)
+    erreurs.prenom = 'Le prénom doit contenir au moins 2 caractères.';
+  else if (!REGEX_NOM.test(prenom))
+    erreurs.prenom = 'Utilisez uniquement des lettres, espaces, tirets ou apostrophes.';
+
+  if (!identifiant) erreurs.identifiant = 'L’identifiant est obligatoire.';
+  else if (identifiant.length < 3)
+    erreurs.identifiant = 'L’identifiant doit contenir au moins 3 caractères.';
+  else if (identifiant.length > 30)
+    erreurs.identifiant = 'L’identifiant ne doit pas dépasser 30 caractères.';
+  else if (!REGEX_IDENTIFIANT.test(identifiant))
+    erreurs.identifiant =
+      'Lettres, chiffres, point, tiret et underscore uniquement, sans espace.';
+
+  if (!email) erreurs.email = 'L’adresse e-mail est obligatoire.';
+  else if (!REGEX_EMAIL.test(email))
+    erreurs.email = 'Saisissez une adresse e-mail valide.';
+
+  const mdp = form.mot_de_passe;
+  if (!mdp) erreurs.mot_de_passe = 'Le mot de passe est obligatoire.';
+  else if (mdp.length < 8)
+    erreurs.mot_de_passe = 'Le mot de passe doit contenir au moins 8 caractères.';
+  else if (!/[A-Z]/.test(mdp) || !/[a-z]/.test(mdp) || !/\d/.test(mdp))
+    erreurs.mot_de_passe =
+      'Ajoutez au moins une majuscule, une minuscule et un chiffre.';
+
+  if (!form.confirmation)
+    erreurs.confirmation = 'Confirmez votre mot de passe.';
+  else if (form.confirmation !== mdp)
+    erreurs.confirmation = 'Les deux mots de passe ne correspondent pas.';
+
+  if (!['AGENT', 'RESPONSABLE'].includes(form.role))
+    erreurs.role = 'Le rôle sélectionné est invalide.';
+
+  return erreurs;
+};
+
+/* =========================================================
+   COMPOSANTS INTERNES
+========================================================= */
+
+// Petit message d'erreur ou d'aide sous un champ
+function MessageChamp({ id, erreur, aide }) {
+  if (erreur) {
+    return (
+      <p
+        id={`${id}-err`}
+        role="alert"
+        className="mt-1.5 flex items-start gap-1.5 text-xs font-medium text-jr-err"
+      >
+        <AlertCircle size={14} className="mt-px shrink-0" aria-hidden="true" />
+        {erreur}
+      </p>
+    );
+  }
+  if (aide) {
+    return (
+      <p id={`${id}-aide`} className="mt-1.5 text-xs text-jr-doux">
+        {aide}
+      </p>
+    );
+  }
+  return null;
+}
+
+// Champ texte avec icône, statut ✓ / ✗ et message
+function ChampTexte({
+  id,
+  label,
+  Icone,
+  erreur,
+  valide,
+  aide,
+  inputRef,
+  ...props
+}) {
+  const classeEtat = erreur
+    ? 'jr-field--err'
+    : valide
+    ? 'jr-field--ok'
+    : '';
+
+  return (
+    <div>
+      <label
+        htmlFor={id}
+        className="mb-1.5 block text-sm font-semibold text-jr-texte"
+      >
+        {label}
+      </label>
+
+      <div className="relative">
+        {Icone && (
+          <Icone
+            size={18}
+            aria-hidden="true"
+            className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-jr-faible"
+          />
+        )}
+
+        <input
+          id={id}
+          name={id}
+          ref={inputRef}
+          aria-invalid={erreur ? 'true' : 'false'}
+          aria-describedby={erreur ? `${id}-err` : aide ? `${id}-aide` : undefined}
+          className={`jr-field w-full rounded-md border py-3 pr-10 text-sm text-jr-texte placeholder:text-jr-faible disabled:cursor-not-allowed disabled:opacity-60 ${
+            Icone ? 'pl-10' : 'pl-4'
+          } ${classeEtat}`}
+          {...props}
+        />
+
+        {erreur && (
+          <XCircle
+            size={18}
+            aria-hidden="true"
+            className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-jr-err"
+          />
+        )}
+        {!erreur && valide && (
+          <CheckCircle2
+            size={18}
+            aria-hidden="true"
+            className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-jr-ok"
+          />
+        )}
+      </div>
+
+      <MessageChamp id={id} erreur={erreur} aide={aide} />
+    </div>
+  );
+}
+
+// Champ mot de passe avec bouton œil et alerte Verr. Maj
+function ChampMotDePasse({
+  id,
+  label,
+  erreur,
+  valide,
+  visible,
+  onToggle,
+  inputRef,
+  aide,
+  children,
+  ...props
+}) {
+  const [majActive, setMajActive] = useState(false);
+
+  const detecterMaj = (e) => {
+    if (typeof e.getModifierState === 'function') {
+      setMajActive(e.getModifierState('CapsLock'));
+    }
+  };
+
+  const classeEtat = erreur
+    ? 'jr-field--err'
+    : valide
+    ? 'jr-field--ok'
+    : '';
+
+  return (
+    <div>
+      <label
+        htmlFor={id}
+        className="mb-1.5 block text-sm font-semibold text-jr-texte"
+      >
+        {label}
+      </label>
+
+      <div className="relative">
+        <Lock
+          size={18}
+          aria-hidden="true"
+          className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-jr-faible"
+        />
+
+        <input
+          id={id}
+          name={id}
+          ref={inputRef}
+          type={visible ? 'text' : 'password'}
+          aria-invalid={erreur ? 'true' : 'false'}
+          aria-describedby={erreur ? `${id}-err` : aide ? `${id}-aide` : undefined}
+          onKeyDown={detecterMaj}
+          onKeyUp={detecterMaj}
+          className={`jr-field w-full rounded-md border py-3 pl-10 pr-12 text-sm text-jr-texte placeholder:text-jr-faible disabled:cursor-not-allowed disabled:opacity-60 ${classeEtat}`}
+          {...props}
+          onBlur={(e) => {
+            setMajActive(false);
+            props.onBlur?.(e);
+          }}
+        />
+
+        <button
+          type="button"
+          onClick={onToggle}
+          disabled={props.disabled}
+          aria-label={visible ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+          aria-pressed={visible}
+          className="jr-lien absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-jr-faible transition hover:text-jr-texte disabled:opacity-50"
+        >
+          {visible ? <EyeOff size={18} /> : <Eye size={18} />}
+        </button>
+      </div>
+
+      {majActive && (
+        <p
+          role="status"
+          className="mt-1.5 flex items-center gap-1.5 text-xs font-medium"
+          style={{ color: COULEURS.attention }}
+        >
+          <AlertCircle size={14} aria-hidden="true" />
+          Verr. Maj activée
+        </p>
+      )}
+
+      <MessageChamp id={id} erreur={erreur} aide={aide} />
+      {children}
+    </div>
+  );
+}
+
+// Barre de force + checklist du mot de passe
+function ForceMotDePasse({ motDePasse }) {
+  const criteres = critèresMotDePasse(motDePasse);
+  const score = criteres.filter((c) => c.ok).length;
+
+  // Niveau de 0 à 4 (4 barres)
+  let niveau = 0;
+  if (motDePasse) {
+    if (score <= 2) niveau = 1;
+    else if (score === 3) niveau = 2;
+    else if (score === 4) niveau = 3;
+    else niveau = 4;
+  }
+
+  const niveaux = [
+    { texte: '', couleur: 'var(--jr-bordure)' },
+    { texte: 'Faible', couleur: 'var(--jr-err)' },
+    { texte: 'Moyen', couleur: COULEURS.elec },
+    { texte: 'Bon', couleur: COULEURS.eauClair },
+    { texte: 'Excellent', couleur: 'var(--jr-ok)' },
+  ];
+  const actuel = niveaux[niveau];
+
+  return (
+    <div className="mt-3 rounded-md border border-jr-bordure bg-jr-surface p-3">
+      <div className="flex items-center gap-3">
+        <div className="flex flex-1 gap-1.5" aria-hidden="true">
+          {[1, 2, 3, 4].map((i) => (
+            <span
+              key={i}
+              className="h-1.5 flex-1 rounded-full transition-colors duration-300"
+              style={{ backgroundColor: i <= niveau ? actuel.couleur : 'var(--jr-bordure)' }}
+            />
+          ))}
+        </div>
+
+        <span
+          aria-live="polite"
+          className="min-w-[4.5rem] text-right text-xs font-semibold"
+          style={{ color: niveau ? actuel.couleur : COULEURS.texteDoux }}
+        >
+          {niveau ? actuel.texte : 'Force'}
+        </span>
+      </div>
+
+      <ul className="mt-3 grid grid-cols-1 gap-x-4 gap-y-1.5 sm:grid-cols-2">
+        {criteres.map((c) => (
+          <li
+            key={c.cle}
+            className={`flex items-center gap-2 text-xs ${
+              c.ok ? 'text-jr-ok' : 'text-jr-doux'
+            }`}
+          >
+            <span
+              className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${
+                c.ok ? 'bg-jr-ok-pale text-jr-ok' : 'bg-jr-bordure text-jr-faible'
+              }`}
+              aria-hidden="true"
+            >
+              {c.ok ? <Check size={11} strokeWidth={3} /> : <X size={11} strokeWidth={3} />}
+            </span>
+            {c.libelle}
+            <span className="sr-only">{c.ok ? ' : validé' : ' : manquant'}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// Carte de choix du rôle (vrai radio natif, navigation clavier incluse)
+function CarteRole({ role, choisi, onChange, disabled }) {
+  const { valeur, titre, description, Icone } = role;
+
+  return (
+    <label
+      className={`jr-role relative flex cursor-pointer flex-col gap-2 rounded-md border-2 p-4 transition ${
+        disabled ? 'cursor-not-allowed opacity-60' : ''
+      }`}
+      style={{
+        borderColor: choisi ? COULEURS.elec : 'var(--jr-bordure)',
+        backgroundColor: choisi ? COULEURS.elecPale : 'var(--jr-surface)',
+      }}
+    >
+      <input
+        type="radio"
+        name="role"
+        value={valeur}
+        checked={choisi}
+        onChange={onChange}
+        disabled={disabled}
+        className="sr-only"
+      />
+
+      <span className="flex items-center justify-between">
+        <span
+          className="flex h-10 w-10 items-center justify-center rounded-md"
+          style={{
+            backgroundColor: choisi ? COULEURS.elec : COULEURS.eauPale,
+            color: choisi ? COULEURS.surElec : COULEURS.lien,
+          }}
+        >
+          <Icone size={20} aria-hidden="true" />
+        </span>
+
+        <span
+          className="flex h-5 w-5 items-center justify-center rounded-full border-2 transition"
+          style={{
+            borderColor: choisi ? COULEURS.elec : 'var(--jr-bordure-forte)',
+            backgroundColor: choisi ? COULEURS.elec : 'transparent',
+          }}
+          aria-hidden="true"
+        >
+          {choisi && <Check size={12} strokeWidth={3.5} color={COULEURS.surElec} />}
+        </span>
+      </span>
+
+      <span className="text-sm font-bold" style={{ color: COULEURS.texte }}>
+        {titre}
+      </span>
+      <span className="text-xs leading-5 text-jr-doux">{description}</span>
+    </label>
+  );
+}
+
+// Ligne d'avantage du panneau gauche
+function Avantage({ Icone, titre, texte, couleur }) {
+  return (
+    <div className="flex items-center gap-4 rounded-md border border-white/15 bg-white/10 p-4 backdrop-blur-sm">
+      <div
+        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md"
+        style={{ backgroundColor: couleur, color: COULEURS.surElec }}
+      >
+        <Icone size={22} aria-hidden="true" />
+      </div>
+      <div>
+        <p className="font-semibold text-white">{titre}</p>
+        <p className="text-sm text-blue-100">{texte}</p>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   PAGE D'INSCRIPTION
+========================================================= */
 function Register() {
   const navigate = useNavigate();
 
-  const [form, setForm] = useState({
-    nom: '',
-    prenom: '',
-    identifiant: '',
-    email: '',
-    mot_de_passe: '',
-    role: 'AGENT',
-  });
+  // --- État du formulaire ---
+  const [form, setForm] = useState(FORM_INITIAL);
+  const [touche, setTouche] = useState({});
+  const [soumis, setSoumis] = useState(false);
+  const [identifiantManuel, setIdentifiantManuel] = useState(false);
 
-  const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
+  // --- Erreurs renvoyées par le serveur ---
+  const [erreursServeur, setErreursServeur] = useState({});
+  const [erreurGlobale, setErreurGlobale] = useState('');
+  const [secousse, setSecousse] = useState(false);
 
-  const [erreur, setErreur] = useState('');
+  // --- Affichage ---
+  const [afficherMdp, setAfficherMdp] = useState(false);
+  const [afficherConfirmation, setAfficherConfirmation] = useState(false);
+  const [chargement, setChargement] = useState(false);
+
+  // --- Succès + compte à rebours ---
   const [succes, setSucces] = useState('');
+  const [compteARebours, setCompteARebours] = useState(REDIRECTION_SECONDES);
 
-  // ==============================
-  // Gestion des champs
-  // ==============================
+  // --- Références ---
+  const refs = useRef({});
+  const montee = useRef(true);
+  const controleur = useRef(null);
+  const verrou = useRef(false); // empêche le double envoi (Entrée comprise)
+
+  // Nettoyage au démontage : annule la requête en cours
+  useEffect(() => {
+    montee.current = true;
+    return () => {
+      montee.current = false;
+      controleur.current?.abort();
+    };
+  }, []);
+
+  // Compte à rebours après succès
+  useEffect(() => {
+    if (!succes) return undefined;
+
+    const minuteur = setInterval(() => {
+      setCompteARebours((valeur) => Math.max(valeur - 1, 0));
+    }, 1000);
+
+    return () => clearInterval(minuteur);
+  }, [succes]);
+
+  // Redirection quand le compte à rebours atteint 0
+  useEffect(() => {
+    if (succes && compteARebours <= 0) {
+      navigate('/');
+    }
+  }, [succes, compteARebours, navigate]);
+
+  // --- Validation ---
+  const erreursLocales = useMemo(() => valider(form), [form]);
+  const formulaireValide = Object.keys(erreursLocales).length === 0;
+
+  // Erreur à afficher pour un champ (locale après blur/soumission, ou serveur)
+  const erreurDe = (champ) => {
+    if (erreursServeur[champ]) return erreursServeur[champ];
+    if (touche[champ] || soumis) return erreursLocales[champ] || '';
+    return '';
+  };
+
+  const estValide = (champ) =>
+    Boolean(touche[champ]) &&
+    !erreursLocales[champ] &&
+    !erreursServeur[champ] &&
+    Boolean(form[champ]);
+
+  // --- Gestion des champs ---
   const handleChange = (e) => {
     const { name, value } = e.target;
 
-    setForm((current) => ({
-      ...current,
-      [name]: value,
-    }));
+    setForm((courant) => {
+      const suivant = { ...courant, [name]: value };
 
-    setErreur('');
-    setSucces('');
+      // Suggestion automatique de l'identifiant tant qu'il n'est pas saisi à la main
+      if ((name === 'nom' || name === 'prenom') && !identifiantManuel) {
+        suivant.identifiant = suggererIdentifiant(suivant.prenom, suivant.nom);
+      }
+      return suivant;
+    });
+
+    if (name === 'identifiant') {
+      setIdentifiantManuel(value.trim() !== '');
+    }
+
+    // Efface les erreurs serveur liées au champ modifié
+    setErreursServeur((courant) => {
+      if (!courant[name] && !(name === 'nom' || name === 'prenom')) return courant;
+      const copie = { ...courant };
+      delete copie[name];
+      if ((name === 'nom' || name === 'prenom') && !identifiantManuel) {
+        delete copie.identifiant;
+      }
+      return copie;
+    });
+    setErreurGlobale('');
   };
 
-  // ==============================
-  // Validation e-mail
-  // ==============================
-  const isValidEmail = (email) => {
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  const handleBlur = (e) => {
+    const { name } = e.target;
+    setTouche((courant) => ({ ...courant, [name]: true }));
   };
 
-  // ==============================
-  // Soumission du formulaire
-  // ==============================
+  const changerRole = (e) => {
+    setForm((courant) => ({ ...courant, role: e.target.value }));
+    setErreurGlobale('');
+  };
+
+  // Place le focus sur le premier champ en erreur
+  const focusPremiereErreur = useCallback((erreurs) => {
+    const premier = ORDRE_CHAMPS.find((champ) => erreurs[champ]);
+    if (premier && refs.current[premier]) {
+      refs.current[premier].focus();
+    }
+  }, []);
+
+  const declencherSecousse = () => {
+    setSecousse(false);
+    // Redémarre l'animation même si elle vient de jouer
+    requestAnimationFrame(() => {
+      if (montee.current) setSecousse(true);
+    });
+  };
+
+  // --- Traduction des erreurs serveur ---
+  const traiterErreurServeur = (error) => {
+    const status = error.response?.status;
+    const message = error.response?.data?.message;
+
+    if (status === 409) {
+      const texte = (message || '').toLowerCase();
+      const champs = {};
+
+      if (texte.includes('identifiant')) {
+        champs.identifiant = 'Cet identifiant est déjà utilisé.';
+      }
+      if (texte.includes('mail')) {
+        champs.email = 'Cette adresse e-mail est déjà utilisée.';
+      }
+
+      if (Object.keys(champs).length > 0) {
+        setErreursServeur(champs);
+        focusPremiereErreur(champs);
+        return;
+      }
+      setErreurGlobale(
+        message || 'Cet identifiant ou cette adresse e-mail existe déjà.'
+      );
+      return;
+    }
+
+    if (status === 400) {
+      setErreurGlobale(message || 'Les informations saisies sont invalides.');
+    } else if (status === 500) {
+      setErreurGlobale(
+        'Une erreur est survenue sur le serveur. Réessayez dans quelques instants ou contactez l’administrateur.'
+      );
+    } else if (error.code === 'ERR_NETWORK' || !error.response) {
+      setErreurGlobale(
+        'Impossible de contacter le serveur. Vérifiez votre connexion ou que le service est bien démarré.'
+      );
+    } else {
+      setErreurGlobale(
+        message || 'Une erreur est survenue lors de la création du compte.'
+      );
+    }
+  };
+
+  // --- Soumission ---
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    setErreur('');
-    setSucces('');
+    // Anti double envoi
+    if (verrou.current || chargement) return;
 
-    const nom = form.nom.trim();
-    const prenom = form.prenom.trim();
-    const identifiant = form.identifiant.trim();
-    const email = form.email.trim().toLowerCase();
-    const mot_de_passe = form.mot_de_passe;
-    const role = form.role;
+    setSoumis(true);
+    setErreurGlobale('');
+    setErreursServeur({});
 
-    // Vérification des champs
-    if (
-      !nom ||
-      !prenom ||
-      !identifiant ||
-      !email ||
-      !mot_de_passe ||
-      !role
-    ) {
-      setErreur('Veuillez remplir tous les champs obligatoires.');
+    // Validation : affiche toutes les erreurs et place le focus
+    if (!formulaireValide) {
+      focusPremiereErreur(erreursLocales);
       return;
     }
 
-    // Vérification du nom
-    if (nom.length < 2) {
-      setErreur('Le nom doit contenir au moins 2 caractères.');
-      return;
-    }
+    // Normalisation avant envoi (la confirmation n'est jamais envoyée)
+    const donnees = {
+      nom: form.nom.trim(),
+      prenom: form.prenom.trim(),
+      identifiant: form.identifiant.trim(),
+      email: form.email.trim().toLowerCase(),
+      mot_de_passe: form.mot_de_passe,
+      role: form.role,
+    };
 
-    // Vérification du prénom
-    if (prenom.length < 2) {
-      setErreur('Le prénom doit contenir au moins 2 caractères.');
-      return;
-    }
+    verrou.current = true;
+    setChargement(true);
 
-    // Vérification de l'identifiant
-    if (identifiant.length < 3) {
-      setErreur('L’identifiant doit contenir au moins 3 caractères.');
-      return;
-    }
-
-    // Vérification de l'e-mail
-    if (!isValidEmail(email)) {
-      setErreur('Veuillez saisir une adresse e-mail valide.');
-      return;
-    }
-
-    // Vérification du mot de passe
-    if (mot_de_passe.length < 8) {
-      setErreur(
-        'Le mot de passe doit contenir au moins 8 caractères.'
-      );
-      return;
-    }
-
-    // Vérification du rôle
-    if (!['AGENT', 'RESPONSABLE'].includes(role)) {
-      setErreur('Le rôle sélectionné est invalide.');
-      return;
-    }
-
-    setLoading(true);
+    controleur.current?.abort();
+    controleur.current = new AbortController();
 
     try {
-      const response = await axiosClient.post('/auth/register', {
-        nom,
-        prenom,
-        identifiant,
-        email,
-        mot_de_passe,
-        role,
+      const response = await axiosClient.post('/auth/register', donnees, {
+        signal: controleur.current.signal,
       });
 
-      setSucces(
-        response.data?.message ||
-          'Compte créé avec succès.'
-      );
+      if (!montee.current) return;
 
-      // Réinitialisation du formulaire
-      setForm({
-        nom: '',
-        prenom: '',
-        identifiant: '',
-        email: '',
-        mot_de_passe: '',
-        role: 'AGENT',
-      });
-
-      setShowPassword(false);
-
-      // Retour automatique vers connexion après 1,5 seconde
-      setTimeout(() => {
-        navigate('/');
-      }, 1500);
-
+      setSucces(response.data?.message || 'Votre compte a bien été créé.');
+      setCompteARebours(REDIRECTION_SECONDES);
+      setForm(FORM_INITIAL);
+      setTouche({});
+      setSoumis(false);
+      setIdentifiantManuel(false);
+      setAfficherMdp(false);
+      setAfficherConfirmation(false);
     } catch (error) {
-      console.error(
-        'Erreur création compte :',
-        error
-      );
+      // Requête annulée volontairement (démontage) : on ne fait rien
+      if (error.code === 'ERR_CANCELED' || error.name === 'CanceledError') return;
+      if (!montee.current) return;
 
-      const status = error.response?.status;
-      const message = error.response?.data?.message;
+      // Détail technique réservé au développeur
+      console.error('Erreur création compte :', error);
 
-      if (status === 400) {
-        setErreur(
-          message ||
-            'Les informations saisies sont invalides.'
-        );
-      } else if (status === 409) {
-        setErreur(
-          message ||
-            'Cet identifiant ou cette adresse e-mail existe déjà.'
-        );
-      } else if (status === 500) {
-        setErreur(
-          message ||
-            'Erreur interne du serveur. Vérifiez le backend et PostgreSQL.'
-        );
-      } else if (
-        error.code === 'ERR_NETWORK' ||
-        !error.response
-      ) {
-        setErreur(
-          'Impossible de contacter le serveur. Vérifiez que le backend est démarré sur le port 5000.'
-        );
-      } else {
-        setErreur(
-          message ||
-            'Une erreur est survenue lors de la création du compte.'
-        );
-      }
-
+      traiterErreurServeur(error);
+      declencherSecousse();
     } finally {
-      setLoading(false);
+      verrou.current = false;
+      if (montee.current) setChargement(false);
     }
   };
 
+  const peutSoumettre = formulaireValide && !chargement;
+
+  /* -------------------------------------------------------
+     RENDU
+  ------------------------------------------------------- */
   return (
-    <div className="relative min-h-screen overflow-hidden bg-slate-100">
+    <FondJirama>
+      <BoutonTheme />
 
-      {/* ==============================
-          ARRIÈRE-PLAN
-      =============================== */}
-      <div className="absolute inset-0">
-        <div className="absolute -left-32 -top-32 h-96 w-96 rounded-full bg-blue-200/40 blur-3xl" />
+      <div className="flex min-h-screen items-center justify-center px-4 pb-8 pt-20">
+        <div className="jr-entree w-full max-w-6xl">
+          <div className="grid overflow-hidden rounded-lg border border-jr-bordure bg-jr-surface shadow-2xl shadow-black/10 lg:grid-cols-[5fr_6fr]">
+            {/* ==================== PANNEAU GAUCHE ==================== */}
+            <aside
+              className="relative hidden overflow-hidden p-10 text-white lg:flex lg:flex-col lg:justify-between xl:p-12"
+              style={{
+                background: 'linear-gradient(155deg, var(--jr-panneau-1) 0%, var(--jr-panneau-2) 60%, var(--jr-panneau-3) 100%)',
+              }}
+            >
+              {/* Décors */}
+              <div className="pointer-events-none absolute -right-24 -top-24 h-80 w-80 rounded-full bg-white/10" aria-hidden="true" />
+              <div className="pointer-events-none absolute -bottom-32 -left-28 h-96 w-96 rounded-full bg-white/10" aria-hidden="true" />
+              <div
+                className="pointer-events-none absolute right-10 top-1/2 h-40 w-40 rounded-full opacity-25 blur-2xl"
+                style={{ backgroundColor: COULEURS.elec }}
+                aria-hidden="true"
+              />
+              <Droplets
+                size={120}
+                strokeWidth={1}
+                className="pointer-events-none absolute -bottom-4 right-6 text-white/10"
+                aria-hidden="true"
+              />
 
-        <div className="absolute -right-32 top-20 h-96 w-96 rounded-full bg-cyan-200/40 blur-3xl" />
-
-        <div className="absolute bottom-0 left-1/3 h-80 w-80 rounded-full bg-blue-100/50 blur-3xl" />
-      </div>
-
-      <div className="relative z-10 flex min-h-screen items-center justify-center px-4 py-8">
-
-        <div className="w-full max-w-5xl">
-
-          <div className="grid overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl lg:grid-cols-2">
-
-            {/* ==============================
-                PANNEAU GAUCHE
-            =============================== */}
-            <div className="relative hidden min-h-[700px] overflow-hidden bg-gradient-to-br from-blue-900 via-blue-700 to-cyan-600 p-10 text-white lg:flex lg:flex-col lg:justify-between">
-
-              <div className="absolute -right-24 -top-24 h-80 w-80 rounded-full bg-white/10" />
-
-              <div className="absolute -bottom-28 -left-24 h-96 w-96 rounded-full bg-white/10" />
-
-              <div className="relative z-10">
-
-                {/* Logo */}
-                <div className="mb-12">
+              <div className="relative">
+                {/* Logo sur pastille blanche pour rester lisible sur le bleu */}
+                <div className="mb-10 inline-flex rounded-md bg-white px-4 py-3 shadow-lg shadow-black/10">
                   <img
-                    src="/images/jirama-logo.png"
+                    src="/images/Jirama.png"
                     alt="Logo JIRAMA"
-                    className="h-20 w-auto object-contain"
+                    className="h-14 w-auto object-contain"
                   />
                 </div>
 
-                <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-blue-50">
-                  <ShieldCheck size={15} />
-                  Création de compte
+                <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-sm font-medium text-blue-50">
+                  <ShieldCheck size={16} aria-hidden="true" />
+                  Espace sécurisé
                 </div>
 
-                <h1 className="mt-6 text-4xl font-bold leading-tight xl:text-5xl">
-                  Rejoindre l'application
+                <h1 className="mt-6 text-4xl font-bold leading-tight xl:text-[2.6rem]">
+                  Créez votre compte pour suivre l’eau et l’électricité
                 </h1>
 
-                <p className="mt-6 max-w-lg text-base leading-7 text-blue-100">
-                  Créez votre compte pour accéder à l'espace
-                  de suivi et d'analyse des consommations
-                  d'eau et d'électricité.
+                <p className="mt-5 max-w-md text-base leading-7 text-blue-100">
+                  Saisissez les relevés, consultez l’historique et analysez les
+                  consommations au même endroit.
                 </p>
               </div>
 
-              {/* Informations */}
-              <div className="relative z-10 space-y-3">
-
-                <div className="flex items-center gap-4 rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur-sm">
-
-                  <div className="rounded-xl bg-white/10 p-3">
-                    <Droplets size={21} />
-                  </div>
-
-                  <div>
-                    <p className="font-semibold">
-                      Suivi de l'eau
-                    </p>
-
-                    <p className="text-sm text-blue-100">
-                      Relevés et historique
-                    </p>
-                  </div>
-
-                </div>
-
-                <div className="flex items-center gap-4 rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur-sm">
-
-                  <div className="rounded-xl bg-white/10 p-3">
-                    <Zap size={21} />
-                  </div>
-
-                  <div>
-                    <p className="font-semibold">
-                      Suivi de l'électricité
-                    </p>
-
-                    <p className="text-sm text-blue-100">
-                      Analyse des consommations
-                    </p>
-                  </div>
-
-                </div>
-
+              <div className="relative mt-10 space-y-3">
+                <Avantage
+                  Icone={Droplets}
+                  titre="Suivi de l’eau"
+                  texte="Relevés en m³ et historique mensuel"
+                  couleur="var(--jr-av-eau)"
+                />
+                <Avantage
+                  Icone={Zap}
+                  titre="Suivi de l’électricité"
+                  texte="Relevés en kWh et comparaisons"
+                  couleur={COULEURS.elec}
+                />
+                <Avantage
+                  Icone={BarChart3}
+                  titre="Analyse des consommations"
+                  texte="Courbes, statistiques et tendances"
+                  couleur="var(--jr-av-analyse)"
+                />
               </div>
-            </div>
+            </aside>
 
-            {/* ==============================
-                FORMULAIRE
-            =============================== */}
-            <div className="flex items-center justify-center p-6 sm:p-10 lg:p-12">
-
+            {/* ==================== COLONNE FORMULAIRE ==================== */}
+            <main className="flex items-center justify-center p-6 sm:p-10 xl:p-12">
               <div className="w-full max-w-md">
-
-                {/* Retour */}
-                <button
-                  type="button"
-                  onClick={() => navigate('/')}
-                  disabled={loading}
-                  className="mb-7 flex items-center gap-2 text-sm font-medium text-slate-500 transition hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <ArrowLeft size={17} />
-                  Retour à la connexion
-                </button>
-
-                {/* Logo mobile */}
-                <div className="mb-7 flex justify-center lg:hidden">
-                  <img
-                    src="/images/jirama-logo.png"
-                    alt="Logo JIRAMA"
-                    className="h-20 w-auto object-contain"
-                  />
-                </div>
-
-                {/* Titre */}
-                <div className="mb-7">
-
-                  <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700">
-                    <UserPlus size={15} />
-                    Nouveau compte
-                  </div>
-
-                  <h2 className="text-3xl font-bold text-slate-900">
-                    Créer un compte
-                  </h2>
-
-                  <p className="mt-2 text-sm leading-6 text-slate-500">
-                    Remplissez le formulaire pour créer votre
-                    compte utilisateur.
-                  </p>
-
-                </div>
-
-                {/* Message succès */}
-                {succes && (
-                  <div className="mb-5 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-                    <CheckCircle
-                      size={19}
-                      className="mt-0.5 shrink-0 text-emerald-600"
-                    />
-
-                    <p className="text-sm leading-5 text-emerald-700">
-                      {succes}
-                    </p>
-                  </div>
-                )}
-
-                {/* Message erreur */}
-                {erreur && (
-                  <div className="mb-5 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
-                    <AlertCircle
-                      size={19}
-                      className="mt-0.5 shrink-0 text-red-600"
-                    />
-
-                    <p className="text-sm leading-5 text-red-700">
-                      {erreur}
-                    </p>
-                  </div>
-                )}
-
-                {/* Formulaire */}
-                <form
-                  onSubmit={handleSubmit}
-                  className="space-y-5"
-                >
-
-                  {/* Nom + prénom */}
-                  <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-
-                    {/* Nom */}
-                    <div>
-                      <label
-                        htmlFor="nom"
-                        className="mb-2 block text-sm font-semibold text-slate-700"
-                      >
-                        Nom
-                      </label>
-
-                      <div className="relative">
-                        <User
-                          size={18}
-                          className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"
-                        />
-
-                        <input
-                          id="nom"
-                          name="nom"
-                          type="text"
-                          value={form.nom}
-                          onChange={handleChange}
-                          placeholder="Nom"
-                          autoComplete="family-name"
-                          disabled={loading}
-                          required
-                          className="w-full rounded-xl border border-slate-300 bg-slate-50 py-3.5 pl-10 pr-3 text-sm outline-none transition focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Prénom */}
-                    <div>
-                      <label
-                        htmlFor="prenom"
-                        className="mb-2 block text-sm font-semibold text-slate-700"
-                      >
-                        Prénom
-                      </label>
-
-                      <input
-                        id="prenom"
-                        name="prenom"
-                        type="text"
-                        value={form.prenom}
-                        onChange={handleChange}
-                        placeholder="Prénom"
-                        autoComplete="given-name"
-                        disabled={loading}
-                        required
-                        className="w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-3.5 text-sm outline-none transition focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                      />
-                    </div>
-
-                  </div>
-
-                  {/* Identifiant */}
-                  <div>
-                    <label
-                      htmlFor="identifiant"
-                      className="mb-2 block text-sm font-semibold text-slate-700"
-                    >
-                      Identifiant
-                    </label>
-
-                    <div className="relative">
-                      <User
-                        size={18}
-                        className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"
-                      />
-
-                      <input
-                        id="identifiant"
-                        name="identifiant"
-                        type="text"
-                        value={form.identifiant}
-                        onChange={handleChange}
-                        placeholder="Ex. agent01"
-                        autoComplete="username"
-                        disabled={loading}
-                        required
-                        className="w-full rounded-xl border border-slate-300 bg-slate-50 py-3.5 pl-10 pr-4 text-sm outline-none transition focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Email */}
-                  <div>
-                    <label
-                      htmlFor="email"
-                      className="mb-2 block text-sm font-semibold text-slate-700"
-                    >
-                      Adresse e-mail
-                    </label>
-
-                    <div className="relative">
-                      <Mail
-                        size={18}
-                        className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"
-                      />
-
-                      <input
-                        id="email"
-                        name="email"
-                        type="email"
-                        value={form.email}
-                        onChange={handleChange}
-                        placeholder="exemple@jirama.mg"
-                        autoComplete="email"
-                        disabled={loading}
-                        required
-                        className="w-full rounded-xl border border-slate-300 bg-slate-50 py-3.5 pl-10 pr-4 text-sm outline-none transition focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Mot de passe */}
-                  <div>
-                    <label
-                      htmlFor="mot_de_passe"
-                      className="mb-2 block text-sm font-semibold text-slate-700"
-                    >
-                      Mot de passe
-                    </label>
-
-                    <div className="relative">
-                      <Lock
-                        size={18}
-                        className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"
-                      />
-
-                      <input
-                        id="mot_de_passe"
-                        name="mot_de_passe"
-                        type={showPassword ? 'text' : 'password'}
-                        value={form.mot_de_passe}
-                        onChange={handleChange}
-                        placeholder="Minimum 8 caractères"
-                        autoComplete="new-password"
-                        disabled={loading}
-                        required
-                        minLength={8}
-                        className="w-full rounded-xl border border-slate-300 bg-slate-50 py-3.5 pl-10 pr-12 text-sm outline-none transition focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                      />
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setShowPassword(
-                            (current) => !current
-                          )
-                        }
-                        disabled={loading}
-                        className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
-                        aria-label={
-                          showPassword
-                            ? 'Masquer le mot de passe'
-                            : 'Afficher le mot de passe'
-                        }
-                      >
-                        {showPassword ? (
-                          <EyeOff size={18} />
-                        ) : (
-                          <Eye size={18} />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Rôle */}
-                  <div>
-                    <label
-                      htmlFor="role"
-                      className="mb-2 block text-sm font-semibold text-slate-700"
-                    >
-                      Rôle
-                    </label>
-
-                    <select
-                      id="role"
-                      name="role"
-                      value={form.role}
-                      onChange={handleChange}
-                      disabled={loading}
-                      required
-                      className="w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-3.5 text-sm outline-none transition focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                    >
-                      <option value="AGENT">
-                        Agent de relevé
-                      </option>
-
-                      <option value="RESPONSABLE">
-                        Responsable
-                      </option>
-                    </select>
-
-                    <p className="mt-2 text-xs text-slate-400">
-                      Administrateur non disponible dans
-                      l'inscription publique.
-                    </p>
-                  </div>
-
-                  {/* Bouton */}
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-blue-600/20 transition hover:-translate-y-0.5 hover:bg-blue-700 hover:shadow-blue-600/30 focus:outline-none focus:ring-4 focus:ring-blue-200 disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
+                {succes ? (
+                  /* ---------- Écran de succès ---------- */
+                  <div
+                    className="py-6 text-center"
+                    role="status"
+                    aria-live="polite"
                   >
-                    {loading ? (
-                      <>
-                        <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                        Création en cours...
-                      </>
-                    ) : (
-                      <>
-                        <UserPlus size={19} />
-                        Créer le compte
-                      </>
-                    )}
-                  </button>
+                    <div
+                      className="jr-pop mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full"
+                      style={{ backgroundColor: 'var(--jr-ok-pale)' }}
+                    >
+                      <CheckCircle2 size={44} className="text-jr-ok" aria-hidden="true" />
+                    </div>
 
-                </form>
+                    <h2 className="text-2xl font-bold" style={{ color: COULEURS.titre }}>
+                      Compte créé
+                    </h2>
+                    <p className="mt-2 text-sm leading-6 text-jr-doux">{succes}</p>
 
-                {/* Retour connexion */}
-                <div className="mt-7 border-t border-slate-100 pt-6 text-center">
-                  <p className="text-sm text-slate-500">
-                    Vous avez déjà un compte ?{' '}
+                    <p className="mt-6 text-sm text-jr-doux">
+                      Redirection vers la connexion dans{' '}
+                      <strong className="tabular-nums" style={{ color: COULEURS.lien }}>
+                        {compteARebours} s
+                      </strong>
+                    </p>
+
+                    <div
+                      className="mx-auto mt-3 h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-jr-bordure"
+                      aria-hidden="true"
+                    >
+                      <div
+                        className="jr-progression h-full rounded-full"
+                        style={{
+                          backgroundColor: COULEURS.elec,
+                          animationDuration: `${REDIRECTION_SECONDES}s`,
+                        }}
+                      />
+                    </div>
 
                     <button
                       type="button"
                       onClick={() => navigate('/')}
-                      disabled={loading}
-                      className="font-semibold text-blue-600 hover:text-blue-700 hover:underline disabled:opacity-50"
+                      className="jr-btn mt-8 inline-flex w-full items-center justify-center gap-2 rounded-md px-4 py-3.5 text-sm font-bold shadow-lg transition hover:-translate-y-0.5"
+                      style={{
+                        backgroundColor: COULEURS.elec,
+                        color: COULEURS.surElec,
+                        boxShadow: `0 10px 24px -10px ${COULEURS.elec}`,
+                      }}
                     >
-                      Se connecter
+                      Aller à la connexion maintenant
                     </button>
-                  </p>
-                </div>
+                  </div>
+                ) : (
+                  /* ---------- Formulaire ---------- */
+                  <div className={secousse ? 'jr-secousse' : ''} onAnimationEnd={() => setSecousse(false)}>
+                    <button
+                      type="button"
+                      onClick={() => navigate('/')}
+                      disabled={chargement}
+                      className="jr-lien mb-6 flex items-center gap-2 text-sm font-medium text-jr-doux transition hover:text-jr-texte disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <ArrowLeft size={17} aria-hidden="true" />
+                      Retour à la connexion
+                    </button>
 
-                {/* Bas */}
-                <div className="mt-6 flex items-center justify-center gap-5 text-xs text-slate-400">
+                    {/* Logo mobile */}
+                    <div className="mb-6 flex justify-center lg:hidden">
+                      <span className="rounded-md bg-white px-3 py-2 shadow-sm ring-1 ring-black/5">
+                      <img
+                        src="/images/Jirama.png"
+                        alt="Logo JIRAMA"
+                        className="h-14 w-auto object-contain"
+                      />
+                    </span>
+                    </div>
 
-                  <span className="flex items-center gap-1.5">
-                    <Droplets size={14} />
-                    Eau
-                  </span>
+                    <div className="mb-6">
+                      <h2 className="text-3xl font-bold" style={{ color: COULEURS.titre }}>
+                        Créer un compte
+                      </h2>
+                      <p className="mt-2 text-sm leading-6 text-jr-doux">
+                        Renseignez vos informations pour accéder à l’application.
+                      </p>
+                    </div>
 
-                  <span className="flex items-center gap-1.5">
-                    <Zap size={14} />
-                    Électricité
-                  </span>
+                    {/* Erreur globale */}
+                    {erreurGlobale && (
+                      <div
+                        role="alert"
+                        className="mb-5 flex items-start gap-3 rounded-md border border-jr-err-bordure bg-jr-err-pale px-4 py-3"
+                      >
+                        <AlertCircle size={19} className="mt-0.5 shrink-0 text-jr-err" aria-hidden="true" />
+                        <p className="text-sm leading-5 text-jr-err">{erreurGlobale}</p>
+                      </div>
+                    )}
 
-                </div>
+                    <form onSubmit={handleSubmit} noValidate className="space-y-5">
+                      {/* Nom + prénom */}
+                      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+                        <ChampTexte
+                          id="nom"
+                          label="Nom"
+                          Icone={User}
+                          type="text"
+                          value={form.nom}
+                          onChange={handleChange}
+                          onBlur={handleBlur}
+                          placeholder="Nom"
+                          autoComplete="family-name"
+                          disabled={chargement}
+                          required
+                          inputRef={(el) => (refs.current.nom = el)}
+                          erreur={erreurDe('nom')}
+                          valide={estValide('nom')}
+                        />
 
+                        <ChampTexte
+                          id="prenom"
+                          label="Prénom"
+                          type="text"
+                          value={form.prenom}
+                          onChange={handleChange}
+                          onBlur={handleBlur}
+                          placeholder="Prénom"
+                          autoComplete="given-name"
+                          disabled={chargement}
+                          required
+                          inputRef={(el) => (refs.current.prenom = el)}
+                          erreur={erreurDe('prenom')}
+                          valide={estValide('prenom')}
+                        />
+                      </div>
+
+                      <ChampTexte
+                        id="identifiant"
+                        label="Identifiant"
+                        Icone={User}
+                        type="text"
+                        value={form.identifiant}
+                        onChange={handleChange}
+                        onBlur={handleBlur}
+                        placeholder="Ex. mario.rakoto"
+                        autoComplete="username"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        maxLength={30}
+                        disabled={chargement}
+                        required
+                        inputRef={(el) => (refs.current.identifiant = el)}
+                        erreur={erreurDe('identifiant')}
+                        valide={estValide('identifiant')}
+                        aide={
+                          !identifiantManuel && form.identifiant
+                            ? 'Suggestion basée sur votre nom. Vous pouvez la modifier.'
+                            : 'Lettres, chiffres, point, tiret ou underscore.'
+                        }
+                      />
+
+                      <ChampTexte
+                        id="email"
+                        label="Adresse e-mail"
+                        Icone={Mail}
+                        type="email"
+                        value={form.email}
+                        onChange={handleChange}
+                        onBlur={handleBlur}
+                        placeholder="exemple@jirama.mg"
+                        autoComplete="email"
+                        inputMode="email"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        disabled={chargement}
+                        required
+                        inputRef={(el) => (refs.current.email = el)}
+                        erreur={erreurDe('email')}
+                        valide={estValide('email')}
+                      />
+
+                      <ChampMotDePasse
+                        id="mot_de_passe"
+                        label="Mot de passe"
+                        value={form.mot_de_passe}
+                        onChange={handleChange}
+                        onBlur={handleBlur}
+                        placeholder="Minimum 8 caractères"
+                        autoComplete="new-password"
+                        disabled={chargement}
+                        required
+                        visible={afficherMdp}
+                        onToggle={() => setAfficherMdp((v) => !v)}
+                        inputRef={(el) => (refs.current.mot_de_passe = el)}
+                        erreur={erreurDe('mot_de_passe')}
+                        valide={estValide('mot_de_passe')}
+                      >
+                        <ForceMotDePasse motDePasse={form.mot_de_passe} />
+                      </ChampMotDePasse>
+
+                      <ChampMotDePasse
+                        id="confirmation"
+                        label="Confirmer le mot de passe"
+                        value={form.confirmation}
+                        onChange={handleChange}
+                        onBlur={handleBlur}
+                        placeholder="Saisissez-le à nouveau"
+                        autoComplete="new-password"
+                        disabled={chargement}
+                        required
+                        visible={afficherConfirmation}
+                        onToggle={() => setAfficherConfirmation((v) => !v)}
+                        inputRef={(el) => (refs.current.confirmation = el)}
+                        erreur={
+                          // Correspondance vérifiée en direct dès qu'on tape
+                          form.confirmation && erreursLocales.confirmation
+                            ? erreursLocales.confirmation
+                            : erreurDe('confirmation')
+                        }
+                        valide={
+                          Boolean(form.confirmation) &&
+                          form.confirmation === form.mot_de_passe &&
+                          !erreursLocales.mot_de_passe
+                        }
+                      />
+
+                      {/* Rôle */}
+                      <fieldset>
+                        <legend className="mb-1.5 text-sm font-semibold text-jr-texte">
+                          Votre rôle
+                        </legend>
+
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          {ROLES.map((role) => (
+                            <CarteRole
+                              key={role.valeur}
+                              role={role}
+                              choisi={form.role === role.valeur}
+                              onChange={changerRole}
+                              disabled={chargement}
+                            />
+                          ))}
+                        </div>
+
+                        <p className="mt-2 text-xs text-jr-doux">
+                          Le rôle administrateur n’est pas proposé à l’inscription.
+                        </p>
+                      </fieldset>
+
+                      {/* Bouton principal */}
+                      <button
+                        type="submit"
+                        disabled={chargement}
+                        aria-disabled={!peutSoumettre}
+                        className="jr-btn flex w-full items-center justify-center gap-2 rounded-md px-4 py-3.5 text-sm font-bold transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:translate-y-0"
+                        style={{
+                          backgroundColor: peutSoumettre || chargement ? COULEURS.elec : 'var(--jr-desactive-fond)',
+                          color: peutSoumettre || chargement ? COULEURS.surElec : 'var(--jr-desactive-texte)',
+                          boxShadow: peutSoumettre
+                            ? `0 12px 24px -12px ${COULEURS.elec}`
+                            : 'none',
+                          cursor: !peutSoumettre && !chargement ? 'not-allowed' : undefined,
+                        }}
+                        onMouseEnter={(e) => {
+                          if (peutSoumettre) e.currentTarget.style.backgroundColor = COULEURS.elecFonce;
+                        }}
+                        onMouseLeave={(e) => {
+                          if (peutSoumettre) e.currentTarget.style.backgroundColor = COULEURS.elec;
+                        }}
+                      >
+                        {chargement ? (
+                          <>
+                            <span
+                          className="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent"
+                          style={{ color: COULEURS.surElec }}
+                          aria-hidden="true"
+                        />
+                            Création en cours…
+                          </>
+                        ) : (
+                          <>
+                            <UserPlus size={19} aria-hidden="true" />
+                            Créer le compte
+                          </>
+                        )}
+                      </button>
+                    </form>
+
+                    <div className="mt-6 border-t border-jr-bordure pt-5 text-center">
+                      <p className="text-sm text-jr-doux">
+                        Vous avez déjà un compte ?{' '}
+                        <button
+                          type="button"
+                          onClick={() => navigate('/')}
+                          disabled={chargement}
+                          className="jr-lien font-semibold underline-offset-4 hover:underline disabled:opacity-50"
+                          style={{ color: COULEURS.lien }}
+                        >
+                          Se connecter
+                        </button>
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-
+            </main>
           </div>
 
-          <p className="mt-5 text-center text-xs text-slate-400">
+          <p className="mt-5 text-center text-xs text-jr-doux">
             Application web JIRAMA — Suivi et analyse des consommations
           </p>
-
         </div>
       </div>
-    </div>
+    </FondJirama>
   );
 }
 

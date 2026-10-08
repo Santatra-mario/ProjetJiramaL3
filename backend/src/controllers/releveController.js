@@ -1,13 +1,8 @@
 const pool = require('../config/db');
+const { synchronizeAnomalies } = require('./anomalieController');
+const { notifyAnomalyForReleve } = require('./notificationController');
 
-/* =========================================================
-   UTILITAIRES
-========================================================= */
 
-/**
- * Vérifie qu'une valeur correspond réellement à une date
- * au format strict YYYY-MM-DD.
- */
 function isValidDateString(value) {
   if (
     typeof value !== 'string' ||
@@ -872,6 +867,16 @@ async function createReleve(
       'COMMIT'
     );
 
+    try {
+      await synchronizeAnomalies();
+      await notifyAnomalyForReleve(insertResult.rows[0].id);
+    } catch (analysisError) {
+      console.error(
+        'Erreur analyse/notification après création du relevé :',
+        analysisError
+      );
+    }
+
     return res.status(201).json({
       status: 'success',
       message:
@@ -1668,6 +1673,16 @@ async function updateReleve(
       'COMMIT'
     );
 
+    try {
+      await synchronizeAnomalies();
+      await notifyAnomalyForReleve(releveId);
+    } catch (analysisError) {
+      console.error(
+        'Erreur analyse/notification après modification du relevé :',
+        analysisError
+      );
+    }
+
     return res.status(200).json({
       status: 'success',
       message:
@@ -1924,10 +1939,6 @@ async function getRelevesByCompteur(
     });
   }
 }
-
-/* =========================================================
-   EXPORT
-========================================================= */
 
 module.exports = {
   getAllReleves,

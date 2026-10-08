@@ -16,3 +16,650 @@ body {
 * {
   box-sizing: border-box;
 }
+
+/* =========================================================
+   THÈME JIRAMA : VARIABLES DE COULEUR
+   Bleu = eau, orange = électricité.
+   :root = mode clair, .dark = mode sombre (classe posée sur <html>).
+   C'est ici (et seulement ici) qu'on ajuste les couleurs.
+========================================================= */
+:root {
+  /* Marque */
+  --jr-eau-fonce: #0a3566;
+  --jr-eau: #0f5fa8;
+  --jr-eau-clair: #2a8bd6;
+  --jr-eau-pale: #e6f1fb;
+  --jr-elec: #f39200;
+  --jr-elec-fonce: #d97e00;
+  --jr-elec-pale: #fff3df;
+  --jr-elec-anneau: #ffe2b0;
+  --jr-sur-elec: #0a3566; /* texte sur fond orange */
+
+  /* Fonds et surfaces */
+  --jr-fond: #f3f7fc;
+  --jr-fond-debut: #e6f0fa;
+  --jr-fond-fin: #fff4e3;
+  --jr-surface: #ffffff;
+  --jr-champ: #f8fafc;
+
+  /* Texte */
+  --jr-texte: #0f172a;
+  --jr-texte-doux: #475569;
+  --jr-texte-faible: #64748b;
+  --jr-titre: #0a3566;
+  --jr-lien: #0f5fa8;
+  --jr-attention: #a85f00;
+
+  /* Bordures et focus */
+  --jr-bordure: #e2e8f0;
+  --jr-bordure-forte: #cbd5e1;
+  --jr-focus: #0f5fa8;
+  --jr-focus-anneau: #e6f1fb;
+
+  /* États */
+  --jr-ok: #047857;
+  --jr-ok-pale: #d1fae5;
+  --jr-ok-anneau: #d1fae5;
+  --jr-err: #dc2626;
+  --jr-err-pale: #fef2f2;
+  --jr-err-bordure: #fecaca;
+  --jr-err-anneau: #fee2e2;
+  --jr-desactive-fond: #e2e8f0;
+  --jr-desactive-texte: #64748b;
+
+  /* Panneau gauche (dégradé bleu) et cartes d'avantages */
+  --jr-panneau-1: #0a3566;
+  --jr-panneau-2: #0f5fa8;
+  --jr-panneau-3: #2a8bd6;
+  --jr-av-eau: #bfe0fa;
+  --jr-av-analyse: #ffffff;
+
+  /* Décor d'arrière-plan */
+  --jr-vague-1: rgba(42, 139, 214, 0.14);
+  --jr-vague-2: rgba(15, 95, 168, 0.17);
+  --jr-vague-3: rgba(10, 53, 102, 0.22);
+  --jr-halo-elec: rgba(243, 146, 0, 0.2);
+  --jr-halo-eau: rgba(42, 139, 214, 0.22);
+  --jr-bulle-fond: rgba(42, 139, 214, 0.16);
+  --jr-bulle-bord: rgba(15, 95, 168, 0.35);
+  --jr-ecume: rgba(255, 255, 255, 0.7);
+}
+
+.dark {
+  /* Marque : l'eau et l'orange gardent leur identité */
+  --jr-eau-pale: rgba(42, 139, 214, 0.18);
+  --jr-elec-pale: rgba(243, 146, 0, 0.14);
+  --jr-elec-anneau: rgba(243, 146, 0, 0.32);
+
+  /* Fonds et surfaces : bleu nuit dérivé du bleu JIRAMA */
+  --jr-fond: #06182f;
+  --jr-fond-debut: #082447;
+  --jr-fond-fin: #101a30;
+  --jr-surface: #0d2646;
+  --jr-champ: #12315a;
+
+  /* Texte */
+  --jr-texte: #e8f0fa;
+  --jr-texte-doux: #b3c5dd;
+  --jr-texte-faible: #8fa6c4;
+  --jr-titre: #e2eefb;
+  --jr-lien: #6db6f0;
+  --jr-attention: #ffb347;
+
+  /* Bordures et focus */
+  --jr-bordure: #1f4170;
+  --jr-bordure-forte: #2e5a94;
+  --jr-focus: #6db6f0;
+  --jr-focus-anneau: rgba(109, 182, 240, 0.25);
+
+  /* États */
+  --jr-ok: #34d399;
+  --jr-ok-pale: rgba(52, 211, 153, 0.16);
+  --jr-ok-anneau: rgba(52, 211, 153, 0.25);
+  --jr-err: #f87171;
+  --jr-err-pale: rgba(248, 113, 113, 0.12);
+  --jr-err-bordure: rgba(248, 113, 113, 0.4);
+  --jr-err-anneau: rgba(248, 113, 113, 0.28);
+  --jr-desactive-fond: #1b3b66;
+  --jr-desactive-texte: #8fa6c4;
+
+  /* Panneau gauche : bleus plus profonds */
+  --jr-panneau-1: #051b38;
+  --jr-panneau-2: #0a3a70;
+  --jr-panneau-3: #16609e;
+
+  /* Décor : tons profonds, lueurs atténuées */
+  --jr-vague-1: rgba(42, 139, 214, 0.16);
+  --jr-vague-2: rgba(15, 95, 168, 0.3);
+  --jr-vague-3: rgba(5, 27, 56, 0.75);
+  --jr-halo-elec: rgba(243, 146, 0, 0.14);
+  --jr-halo-eau: rgba(42, 139, 214, 0.2);
+  --jr-bulle-fond: rgba(109, 182, 240, 0.14);
+  --jr-bulle-bord: rgba(109, 182, 240, 0.4);
+  --jr-ecume: rgba(109, 182, 240, 0.35);
+}
+
+/* =========================================================
+   PAGES D'AUTHENTIFICATION (Login / Register)
+========================================================= */
+.jr-page {
+  color-scheme: light;
+}
+.dark .jr-page {
+  color-scheme: dark;
+}
+
+/* Champs de saisie */
+.jr-field {
+  border-color: var(--jr-bordure-forte);
+  background-color: var(--jr-champ);
+  color: var(--jr-texte);
+  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+}
+.jr-field:hover:not(:disabled) {
+  border-color: var(--jr-texte-faible);
+}
+.jr-field:focus {
+  outline: none;
+  background-color: var(--jr-surface);
+  border-color: var(--jr-focus);
+  box-shadow: 0 0 0 4px var(--jr-focus-anneau);
+}
+.jr-field--ok {
+  border-color: var(--jr-ok);
+}
+.jr-field--ok:focus {
+  border-color: var(--jr-ok);
+  box-shadow: 0 0 0 4px var(--jr-ok-anneau);
+}
+.jr-field--err {
+  border-color: var(--jr-err);
+  background-color: var(--jr-surface);
+}
+.jr-field--err:focus {
+  border-color: var(--jr-err);
+  box-shadow: 0 0 0 4px var(--jr-err-anneau);
+}
+
+/* Remplissage automatique du navigateur : garde les couleurs du thème */
+.jr-field:-webkit-autofill {
+  -webkit-text-fill-color: var(--jr-texte);
+  caret-color: var(--jr-texte);
+  box-shadow: 0 0 0 1000px var(--jr-champ) inset;
+}
+.jr-field:-webkit-autofill:focus {
+  box-shadow: 0 0 0 1000px var(--jr-surface) inset,
+    0 0 0 4px var(--jr-focus-anneau);
+}
+
+/* Cartes de rôle, boutons et liens : focus clavier visible */
+.jr-role:focus-within {
+  box-shadow: 0 0 0 4px var(--jr-elec-anneau);
+}
+.jr-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px var(--jr-elec-pale), 0 0 0 6px var(--jr-elec);
+}
+.jr-lien:focus-visible {
+  outline: 2px solid var(--jr-focus);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+/* =========================================================
+   ANIMATIONS
+========================================================= */
+@keyframes jr-entree {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes jr-secousse {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-6px);
+  }
+  40% {
+    transform: translateX(6px);
+  }
+  60% {
+    transform: translateX(-4px);
+  }
+  80% {
+    transform: translateX(4px);
+  }
+}
+@keyframes jr-progression {
+  from {
+    width: 0%;
+  }
+  to {
+    width: 100%;
+  }
+}
+@keyframes jr-pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+/* Vagues : défilement lent et continu (le tracé est périodique) */
+@keyframes jr-vague {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+/* Courant électrique qui circule le long du câble */
+@keyframes jr-flux {
+  to {
+    stroke-dashoffset: -96;
+  }
+}
+
+/* Bulles d'eau qui montent en se balançant */
+@keyframes jr-bulle {
+  0% {
+    transform: translate3d(0, 0, 0) scale(0.6);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.9;
+  }
+  50% {
+    transform: translate3d(var(--jr-derive, 18px), -55vh, 0) scale(1);
+  }
+  90% {
+    opacity: 0.5;
+  }
+  100% {
+    transform: translate3d(calc(var(--jr-derive, 18px) * -1), -112vh, 0)
+      scale(1.15);
+    opacity: 0;
+  }
+}
+/* Étincelles qui scintillent et dérivent */
+@keyframes jr-scintille {
+  0%,
+  100% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(0.4);
+  }
+  45% {
+    opacity: 1;
+    transform: translate3d(var(--jr-dx, 8px), -16px, 0) scale(1);
+  }
+  70% {
+    opacity: 0.25;
+  }
+}
+/* Éclair rare et discret */
+@keyframes jr-eclair {
+  0%,
+  91%,
+  100% {
+    opacity: 0;
+  }
+  92% {
+    opacity: 0.9;
+  }
+  93.5% {
+    opacity: 0.15;
+  }
+  95% {
+    opacity: 0.75;
+  }
+  97% {
+    opacity: 0;
+  }
+}
+/* Les halos « respirent » */
+@keyframes jr-respire {
+  from {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  to {
+    transform: scale(1.14);
+    opacity: 1;
+  }
+}
+/* Houle : les vagues montent et descendent doucement */
+@keyframes jr-houle {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-12px);
+  }
+}
+
+.jr-entree {
+  animation: jr-entree 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.jr-secousse {
+  animation: jr-secousse 0.45s ease-in-out;
+}
+.jr-pop {
+  animation: jr-pop 0.5s ease-out both;
+}
+.jr-progression {
+  animation: jr-progression 3s linear forwards; /* durée réglée en ligne */
+}
+.jr-vague {
+  animation: jr-vague linear infinite; /* durée réglée en ligne */
+}
+.jr-flux {
+  stroke-dashoffset: 0;
+  animation: jr-flux 6s linear infinite;
+}
+.jr-bulle {
+  animation: jr-bulle linear infinite; /* durée et délai réglés en ligne */
+}
+.jr-scintille {
+  animation: jr-scintille ease-in-out infinite;
+}
+.jr-eclair {
+  animation: jr-eclair 14s linear infinite;
+}
+.jr-respire {
+  animation: jr-respire 8s ease-in-out infinite alternate;
+}
+.jr-houle {
+  animation: jr-houle ease-in-out infinite alternate;
+}
+
+/* Transition douce des couleurs pendant le changement de thème
+   (la classe est ajoutée ~0,4 s par le hook useTheme) */
+html.jr-theme-anim *,
+html.jr-theme-anim *::before,
+html.jr-theme-anim *::after {
+  transition: background-color 0.3s ease, border-color 0.3s ease,
+    color 0.3s ease, fill 0.3s ease, stroke 0.3s ease,
+    box-shadow 0.3s ease !important;
+}
+
+/* Respect de la préférence « réduire les animations » */
+@media (prefers-reduced-motion: reduce) {
+  .jr-entree,
+  .jr-secousse,
+  .jr-pop,
+  .jr-vague,
+  .jr-flux,
+  .jr-bulle,
+  .jr-scintille,
+  .jr-eclair,
+  .jr-respire,
+  .jr-toast,
+  .jr-shimmer,
+  .jr-houle {
+    animation: none !important;
+  }
+  .jr-bulle,
+  .jr-scintille {
+    display: none;
+  }
+  .jr-progression {
+    animation-duration: 0.01s !important;
+  }
+  .jr-field,
+  .jr-btn {
+    transition: none;
+  }
+  html.jr-theme-anim *,
+  html.jr-theme-anim *::before,
+  html.jr-theme-anim *::after {
+    transition: none !important;
+  }
+}
+
+/* =========================================================
+   ADMIN : SURFACES, PONT DE COMPATIBILITÉ ET GRAPHIQUES
+   .jr-admin est posé par <AdminShell>. Les classes Tailwind
+   « en dur » (slate, white, blue…) y sont redirigées vers les
+   variables --jr-* : le mode clair/sombre s'applique partout.
+   Migrez-les vers jr-* au fil du temps, puis supprimez le pont.
+========================================================= */
+.dark body {
+  background-color: var(--jr-fond);
+}
+
+/* Surfaces semi-opaques : le fond Jirama reste visible entre les cartes */
+.jr-verre {
+  background-color: color-mix(in srgb, var(--jr-surface) 95%, transparent);
+}
+.jr-verre-fort {
+  background-color: color-mix(in srgb, var(--jr-surface) 98%, transparent);
+}
+
+/* Cartes KPI Eau / Électricité */
+.jr-carte-eau {
+  border: 1px solid color-mix(in srgb, var(--jr-eau-clair) 40%, transparent);
+  background-color: color-mix(in srgb, var(--jr-surface) 95%, transparent);
+  background-image: linear-gradient(135deg, var(--jr-eau-pale), transparent 70%);
+}
+.jr-carte-elec {
+  border: 1px solid color-mix(in srgb, var(--jr-elec) 40%, transparent);
+  background-color: color-mix(in srgb, var(--jr-surface) 95%, transparent);
+  background-image: linear-gradient(135deg, var(--jr-elec-pale), transparent 70%);
+}
+
+/* ----- Fonds ----- */
+.jr-admin .bg-white {
+  background-color: color-mix(in srgb, var(--jr-surface) 92%, transparent);
+}
+.jr-admin .focus\:bg-white:focus {
+  background-color: var(--jr-surface);
+}
+.jr-admin .bg-slate-50,
+.jr-admin .bg-slate-50\/50,
+.jr-admin .bg-slate-50\/70,
+.jr-admin .bg-slate-50\/80 {
+  background-color: var(--jr-champ);
+}
+.jr-admin .bg-slate-100,
+.jr-admin .bg-slate-200\/60,
+.jr-admin .bg-slate-200\/70 {
+  background-color: var(--jr-bordure);
+}
+.jr-admin .hover\:bg-slate-50:hover,
+.jr-admin .hover\:bg-slate-50\/80:hover,
+.jr-admin .hover\:bg-slate-100:hover {
+  background-color: var(--jr-eau-pale);
+}
+.jr-admin .bg-slate-900 {
+  background-color: var(--jr-eau-fonce);
+}
+.jr-admin .hover\:bg-slate-800:hover {
+  background-color: var(--jr-eau);
+}
+.dark .jr-admin .bg-slate-900 {
+  background-color: var(--jr-eau);
+}
+.dark .jr-admin .hover\:bg-slate-800:hover {
+  background-color: var(--jr-eau-clair);
+}
+
+/* Pastilles de couleur (icônes des KPI, alertes) */
+.jr-admin .bg-blue-50,
+.jr-admin .bg-sky-50 {
+  background-color: var(--jr-eau-pale);
+}
+.jr-admin .bg-amber-50 {
+  background-color: var(--jr-elec-pale);
+}
+.jr-admin .bg-emerald-50 {
+  background-color: var(--jr-ok-pale);
+}
+.jr-admin .bg-red-50,
+.jr-admin .bg-red-50\/80 {
+  background-color: var(--jr-err-pale);
+}
+
+/* ----- Textes ----- */
+.jr-admin .text-slate-900,
+.jr-admin .text-slate-800,
+.jr-admin .hover\:text-slate-900:hover {
+  color: var(--jr-texte);
+}
+.jr-admin .text-slate-700,
+.jr-admin .text-slate-600 {
+  color: var(--jr-texte-doux);
+}
+.jr-admin .text-slate-500,
+.jr-admin .text-slate-400 {
+  color: var(--jr-texte-faible);
+}
+.jr-admin .text-blue-600,
+.jr-admin .text-blue-700,
+.jr-admin .text-sky-600,
+.jr-admin .text-sky-700 {
+  color: var(--jr-lien);
+}
+.jr-admin .text-amber-500 {
+  color: var(--jr-elec);
+}
+.jr-admin .text-amber-600,
+.jr-admin .text-amber-700 {
+  color: var(--jr-attention);
+}
+.jr-admin .text-emerald-600,
+.jr-admin .text-emerald-700 {
+  color: var(--jr-ok);
+}
+.jr-admin .text-red-500,
+.jr-admin .text-red-600,
+.jr-admin .text-red-700 {
+  color: var(--jr-err);
+}
+/* Pastille orange du compteur de notifications : texte foncé sur orange */
+.jr-admin .bg-amber-400.text-slate-900 {
+  color: var(--jr-sur-elec);
+}
+
+/* ----- Bordures ----- */
+.jr-admin .border-slate-100,
+.jr-admin .border-slate-200,
+.jr-admin .border-slate-300,
+.jr-admin .border-slate-200\/80 {
+  border-color: var(--jr-bordure);
+}
+.jr-admin .hover\:border-slate-300:hover {
+  border-color: var(--jr-bordure-forte);
+}
+.jr-admin .border-red-200 {
+  border-color: var(--jr-err-bordure);
+}
+.jr-admin .divide-slate-100 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--jr-bordure);
+}
+
+/* ----- Champs et focus ----- */
+.dark .jr-admin input,
+.dark .jr-admin select {
+  color-scheme: dark;
+}
+.jr-admin :is(button, a, [role='button'], [tabindex]):focus-visible {
+  outline: 2px solid var(--jr-focus);
+  outline-offset: 2px;
+}
+
+/* ----- Graphiques recharts : info-bulles et légendes ----- */
+.jr-admin .recharts-default-tooltip {
+  background-color: var(--jr-surface) !important;
+  border-color: var(--jr-bordure) !important;
+  border-radius: 0.75rem;
+}
+.jr-admin .recharts-tooltip-label,
+.jr-admin .recharts-tooltip-item {
+  color: var(--jr-texte) !important;
+}
+.jr-admin .recharts-legend-item-text {
+  color: var(--jr-texte-doux) !important;
+}
+
+/* =========================================================
+   PAGE ABONNÉS : grain, bouton orange, squelette, toast
+========================================================= */
+
+/* Grain très léger sur le fond (opacité <= 4 %) */
+.jr-grain {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.035;
+  mix-blend-mode: multiply;
+}
+.dark .jr-grain {
+  opacity: 0.04;
+  mix-blend-mode: screen;
+}
+
+/* Bouton d'action principal : orange électrique, texte bleu foncé */
+.jr-btn-elec {
+  background-color: var(--jr-elec);
+  color: var(--jr-sur-elec);
+  transition: filter 0.15s, transform 0.1s;
+}
+.jr-btn-elec:hover:not(:disabled) {
+  filter: brightness(1.07);
+}
+.jr-btn-elec:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+/* Squelette de chargement */
+@keyframes jr-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+.jr-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    var(--jr-eau-pale) 25%,
+    color-mix(in srgb, var(--jr-eau-clair) 24%, transparent) 50%,
+    var(--jr-eau-pale) 75%
+  );
+  background-size: 200% 100%;
+  animation: jr-shimmer 1.6s linear infinite;
+}
+
+/* Toast : entre par la droite */
+@keyframes jr-toast {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.jr-toast {
+  animation: jr-toast 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jr-btn-elec {
+    transition: none;
+  }
+}

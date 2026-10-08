@@ -17,6 +17,12 @@ import {
 import axiosClient from '../../api/axiosClient.js';
 import Sidebar from '../../components/admin/Sidebar.jsx';
 import Header from '../../components/admin/Header.jsx';
+import AdminShell from '../../components/admin/AdminShell.jsx';
+import {
+  EtatErreur,
+  EtatVide,
+  SqueletteLignes,
+} from '../../components/admin/utilisateurs/EtatsAnnuaire.jsx';
 
 function UsersPage() {
   const navigate = useNavigate();
@@ -413,18 +419,24 @@ function UsersPage() {
     navigate(path);
   };
 
+  // Échec du chargement initial : l'erreur s'affiche dans l'annuaire
+  const erreurChargement =
+    Boolean(error) && !loading && users.length === 0 && !modalOpen;
+
   if (!currentUser) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-100">
-        <div className="rounded-xl bg-white px-6 py-5 text-sm text-slate-500 shadow-sm">
-          Chargement...
+      <AdminShell>
+        <div className="flex min-h-screen items-center justify-center">
+          <div className="jr-verre rounded-xl border border-jr-bordure px-6 py-5 text-sm text-jr-doux shadow-sm">
+            Chargement...
+          </div>
         </div>
-      </div>
+      </AdminShell>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-100">
+    <AdminShell>
 
       {/* SIDEBAR */}
       <Sidebar
@@ -474,7 +486,7 @@ function UsersPage() {
             <button
               type="button"
               onClick={openCreateModal}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-jr-eau px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-jr-eau-fonce focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-jr-elec"
             >
               <Plus size={18} />
               Ajouter un utilisateur
@@ -482,14 +494,17 @@ function UsersPage() {
           </div>
 
           {/* MESSAGES */}
-          {error && (
-            <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+          {error && !erreurChargement && (
+            <div
+              role="alert"
+              className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700"
+            >
               {error}
             </div>
           )}
 
           {success && (
-            <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
+            <div role="status" className="mb-5 rounded-xl border border-jr-ok bg-jr-ok-pale px-4 py-3 text-sm font-medium text-jr-ok">
               {success}
             </div>
           )}
@@ -512,7 +527,7 @@ function UsersPage() {
                     setSearch(event.target.value)
                   }
                   placeholder="Rechercher..."
-                  className="w-full rounded-xl border border-slate-300 bg-slate-50 py-3 pl-10 pr-4 text-sm outline-none transition focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-100"
+                  className="w-full rounded-xl border border-slate-300 bg-slate-50 py-3 pl-10 pr-4 text-sm outline-none transition focus:border-jr-eau focus:bg-jr-surface focus:ring-4 focus:ring-jr-focus-anneau"
                 />
               </div>
 
@@ -522,7 +537,7 @@ function UsersPage() {
                 onChange={(event) =>
                   setRoleFilter(event.target.value)
                 }
-                className="rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-100"
+                className="rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none focus:border-jr-eau focus:bg-jr-surface focus:ring-4 focus:ring-jr-focus-anneau"
               >
                 <option value="">
                   Tous les rôles
@@ -549,7 +564,7 @@ function UsersPage() {
                     event.target.value
                   )
                 }
-                className="rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-100"
+                className="rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none focus:border-jr-eau focus:bg-jr-surface focus:ring-4 focus:ring-jr-focus-anneau"
               >
                 <option value="">
                   Tous les statuts
@@ -583,8 +598,9 @@ function UsersPage() {
               <button
                 type="button"
                 onClick={loadUsers}
-                className="rounded-xl p-2.5 text-slate-500 transition hover:bg-slate-100 hover:text-blue-600"
+                className="rounded-xl p-2.5 text-slate-500 transition hover:bg-slate-100 hover:text-jr-lien focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-elec"
                 title="Actualiser"
+                aria-label="Actualiser la liste"
               >
                 <RefreshCw
                   size={18}
@@ -631,26 +647,22 @@ function UsersPage() {
 
                 </thead>
 
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-slate-100" aria-busy={loading}>
 
                   {loading ? (
-                    <tr>
-                      <td
-                        colSpan="6"
-                        className="px-5 py-14 text-center text-sm text-slate-500"
-                      >
-                        Chargement des utilisateurs...
-                      </td>
-                    </tr>
+                    <SqueletteLignes />
+                  ) : erreurChargement ? (
+                    <EtatErreur message={error} onReessayer={loadUsers} />
                   ) : filteredUsers.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan="6"
-                        className="px-5 py-14 text-center text-sm text-slate-500"
-                      >
-                        Aucun utilisateur trouvé.
-                      </td>
-                    </tr>
+                    <EtatVide
+                      filtre={users.length > 0}
+                      onAjouter={openCreateModal}
+                      onReinitialiser={() => {
+                        setSearch('');
+                        setRoleFilter('');
+                        setStatusFilter('');
+                      }}
+                    />
                   ) : (
                     filteredUsers.map(
                       (user) => (
@@ -717,8 +729,9 @@ function UsersPage() {
                                     user
                                   )
                                 }
-                                className="rounded-lg p-2 text-slate-500 transition hover:bg-blue-50 hover:text-blue-600"
+                                className="rounded-lg p-2 text-slate-500 transition hover:bg-jr-eau-pale hover:text-jr-lien focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-elec"
                                 title="Modifier"
+                                aria-label={`Modifier ${user.prenom} ${user.nom}`}
                               >
                                 <Pencil size={17} />
                               </button>
@@ -737,11 +750,11 @@ function UsersPage() {
                                 className={`rounded-lg p-2 transition ${
                                   user.id ===
                                   currentUser.id
-                                    ? 'cursor-not-allowed text-slate-300'
+                                    ? 'cursor-not-allowed text-jr-faible opacity-50'
                                     : user.statut ===
                                       'actif'
-                                    ? 'text-slate-500 hover:bg-red-50 hover:text-red-600'
-                                    : 'text-emerald-600 hover:bg-emerald-50'
+                                    ? 'text-slate-500 hover:bg-jr-err-pale hover:text-jr-err'
+                                    : 'text-jr-ok hover:bg-jr-ok-pale'
                                 }`}
                                 title={
                                   user.id ===
@@ -751,6 +764,15 @@ function UsersPage() {
                                       'actif'
                                     ? 'Désactiver'
                                     : 'Réactiver'
+                                }
+                                aria-label={
+                                  user.id ===
+                                  currentUser.id
+                                    ? 'Votre compte'
+                                    : user.statut ===
+                                      'actif'
+                                    ? `Désactiver ${user.prenom} ${user.nom}`
+                                    : `Réactiver ${user.prenom} ${user.nom}`
                                 }
                               >
                                 <Power size={17} />
@@ -775,9 +797,9 @@ function UsersPage() {
 
       {/* MODAL */}
       {modalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 p-4">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
 
-          <div className="max-h-[95vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+          <div className="max-h-[95vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-jr-bordure bg-jr-surface shadow-2xl">
 
             {/* Header modal */}
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
@@ -799,6 +821,7 @@ function UsersPage() {
                 type="button"
                 onClick={closeModal}
                 className="rounded-xl p-2 text-slate-500 transition hover:bg-slate-100"
+                aria-label="Fermer"
               >
                 <X size={20} />
               </button>
@@ -824,7 +847,7 @@ function UsersPage() {
                     value={form.nom}
                     onChange={handleChange}
                     required
-                    className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                    className="w-full rounded-xl border border-slate-300 bg-jr-champ px-4 py-3 text-sm text-jr-texte outline-none focus:border-jr-eau focus:ring-4 focus:ring-jr-focus-anneau"
                   />
                 </div>
 
@@ -840,7 +863,7 @@ function UsersPage() {
                     value={form.prenom}
                     onChange={handleChange}
                     required
-                    className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                    className="w-full rounded-xl border border-slate-300 bg-jr-champ px-4 py-3 text-sm text-jr-texte outline-none focus:border-jr-eau focus:ring-4 focus:ring-jr-focus-anneau"
                   />
                 </div>
 
@@ -856,7 +879,7 @@ function UsersPage() {
                     value={form.identifiant}
                     onChange={handleChange}
                     required
-                    className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                    className="w-full rounded-xl border border-slate-300 bg-jr-champ px-4 py-3 text-sm text-jr-texte outline-none focus:border-jr-eau focus:ring-4 focus:ring-jr-focus-anneau"
                   />
                 </div>
 
@@ -872,7 +895,7 @@ function UsersPage() {
                     value={form.email}
                     onChange={handleChange}
                     required
-                    className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                    className="w-full rounded-xl border border-slate-300 bg-jr-champ px-4 py-3 text-sm text-jr-texte outline-none focus:border-jr-eau focus:ring-4 focus:ring-jr-focus-anneau"
                   />
                 </div>
 
@@ -890,7 +913,7 @@ function UsersPage() {
                       onChange={handleChange}
                       minLength={8}
                       required
-                      className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                      className="w-full rounded-xl border border-slate-300 bg-jr-champ px-4 py-3 text-sm text-jr-texte outline-none focus:border-jr-eau focus:ring-4 focus:ring-jr-focus-anneau"
                     />
 
                     <p className="mt-1 text-xs text-slate-400">
@@ -910,7 +933,7 @@ function UsersPage() {
                     value={form.role}
                     onChange={handleChange}
                     required
-                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                    className="w-full rounded-xl border border-slate-300 bg-jr-champ px-4 py-3 text-sm text-jr-texte outline-none focus:border-jr-eau focus:ring-4 focus:ring-jr-focus-anneau"
                   >
                     <option value="AGENT">
                       Agent
@@ -958,7 +981,7 @@ function UsersPage() {
                 <button
                   type="submit"
                   disabled={saving}
-                  className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex items-center gap-2 rounded-xl bg-jr-eau px-5 py-3 text-sm font-semibold text-white transition hover:bg-jr-eau-fonce focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-jr-elec disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {saving ? (
                     <RefreshCw
@@ -982,44 +1005,47 @@ function UsersPage() {
           </div>
         </div>
       )}
-    </div>
+    </AdminShell>
   );
 }
 
 /* =========================================================
    ROLE BADGE
+   Rôle = icône + libellé (jamais la couleur seule), palette Jirama.
 ========================================================= */
 function RoleBadge({ role }) {
   const config = {
     ADMINISTRATEUR: {
       label: 'Administrateur',
-      className: 'bg-purple-50 text-purple-700',
+      className: 'border-jr-eau bg-jr-eau text-white',
+      iconClassName: 'text-white',
       icon: ShieldCheck,
     },
 
     AGENT: {
       label: 'Agent',
-      className: 'bg-blue-50 text-blue-700',
+      className: 'border-jr-bordure-forte bg-jr-eau-pale text-jr-texte',
+      iconClassName: 'text-jr-lien',
       icon: UserRound,
     },
 
     RESPONSABLE: {
       label: 'Responsable',
-      className: 'bg-cyan-50 text-cyan-700',
+      className: 'border-jr-elec bg-jr-elec-pale text-jr-texte',
+      iconClassName: 'text-jr-attention',
       icon: ShieldAlert,
     },
   };
 
-  const current =
-    config[role] || config.AGENT;
+  const current = config[role] || config.AGENT;
 
   const Icon = current.icon;
 
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${current.className}`}
+      className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold ${current.className}`}
     >
-      <Icon size={13} />
+      <Icon size={14} aria-hidden="true" className={current.iconClassName} />
       {current.label}
     </span>
   );
@@ -1033,15 +1059,22 @@ function StatusBadge({ status }) {
 
   return (
     <span
-      className={`inline-flex items-center rounded-full px-3 py-1.5 text-xs font-semibold ${
+      className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold ${
         actif
-          ? 'bg-emerald-50 text-emerald-700'
-          : 'bg-slate-100 text-slate-500'
+          ? 'border-jr-ok bg-jr-ok-pale text-jr-ok'
+          : 'border-jr-bordure bg-jr-champ text-jr-faible'
       }`}
     >
+      <span
+        aria-hidden="true"
+        className={`h-1.5 w-1.5 rounded-full ${
+          actif ? 'bg-jr-ok' : 'bg-jr-faible'
+        }`}
+      />
       {actif ? 'Actif' : 'Inactif'}
     </span>
   );
 }
 
 export default UsersPage;
+
