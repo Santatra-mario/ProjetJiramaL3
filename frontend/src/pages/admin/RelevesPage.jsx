@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -16,11 +17,8 @@ import {
   X,
   Save,
   RefreshCw,
-  ClipboardList,
   Droplets,
   Zap,
-  UserRound,
-  CalendarDays,
   FileText,
 } from 'lucide-react';
 
@@ -30,6 +28,7 @@ import autoTable from 'jspdf-autotable';
 import axiosClient from '../../api/axiosClient.js';
 import Sidebar from '../../components/admin/Sidebar.jsx';
 import Header from '../../components/admin/Header.jsx';
+import AdminShell from '../../components/admin/AdminShell.jsx';
 
 /* =========================================================
    UTILITAIRES
@@ -273,6 +272,68 @@ function getFacturationTemporaire(type) {
     ? FACTURATION_TEMPORAIRE.EAU
     : FACTURATION_TEMPORAIRE.ELECTRICITE;
 }
+
+/* =========================================================
+   AFFICHAGE : identité des types de compteur et outils de rendu
+   (ajouts de présentation uniquement, aucune logique métier)
+   Eau = bleu, électricité = orange. Les textes utilisent
+   --jr-lien / --jr-attention pour rester lisibles en sombre.
+========================================================= */
+const STYLE_TYPE = {
+  EAU: {
+    libelle: 'Eau',
+    unite: 'm³',
+    texte: 'var(--jr-lien)',
+    fond: 'var(--jr-eau-pale)',
+    trait: 'var(--jr-eau-clair)',
+  },
+  ELECTRICITE: {
+    libelle: 'Électricité',
+    unite: 'kWh',
+    texte: 'var(--jr-attention)',
+    fond: 'var(--jr-elec-pale)',
+    trait: 'var(--jr-elec)',
+  },
+};
+
+const styleType = (type) =>
+  type === 'EAU' ? STYLE_TYPE.EAU : STYLE_TYPE.ELECTRICITE;
+
+const FILTRES_TYPE = [
+  { valeur: '', libelle: 'Tous' },
+  { valeur: 'EAU', libelle: 'Eau' },
+  { valeur: 'ELECTRICITE', libelle: 'Électricité' },
+];
+
+const pourcent = (partie, total) =>
+  total ? Math.round((partie / total) * 100) : 0;
+
+const formatNombre = (n) => Number(n || 0).toLocaleString('fr-FR');
+
+const formatConso = (n) =>
+  Number(n || 0).toLocaleString('fr-FR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
+const nomAbonneDe = (releve) =>
+  releve.abonne_prenom
+    ? `${releve.abonne_prenom} ${releve.abonne_nom || ''}`.trim()
+    : releve.abonne_nom || '—';
+
+const initialesDe = (releve) => {
+  const a = String(releve.abonne_prenom || '').trim().charAt(0);
+  const b = String(releve.abonne_nom || '').trim().charAt(0);
+  return (a + b).toUpperCase() || '?';
+};
+
+// Teinte stable (eau ou électricité) déduite du numéro d'abonné
+const teinteAbonne = (numero) => {
+  const somme = String(numero || '')
+    .split('')
+    .reduce((acc, c) => acc + c.charCodeAt(0), 0);
+  return somme % 2 === 0 ? 'EAU' : 'ELECTRICITE';
+};
 
 /* =========================================================
    PAGE
@@ -1536,1594 +1597,503 @@ function RelevesPage() {
      Ce n'est pas une facture JIRAMA officielle.
   ========================================================== */
 
-  const generateRelevePDF =
-    async (
-      releve
-    ) => {
-      try {
-        const doc =
-          new jsPDF({
-            orientation:
-              'portrait',
-            unit: 'mm',
-            format: 'a4',
-          });
+  const generateRelevePDF = async (releve) => {
+    try {
+      const doc = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4',
+      });
 
-        const pageWidth =
-          doc.internal.pageSize.getWidth();
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 12;
+      const contentWidth = pageWidth - margin * 2;
+      const bottomLimit = pageHeight - 15;
 
-        const pageHeight =
-          doc.internal.pageSize.getHeight();
+      const BLUE = [0, 78, 145];
+      const ORANGE = [205, 112, 45];
+      const LIGHT_BLUE = [239, 245, 251];
+      const LIGHT_ORANGE = [252, 244, 237];
+      const LIGHT_GRAY = [247, 247, 247];
+      const DARK = [35, 35, 35];
+      const GRAY = [95, 95, 95];
+      const BORDER = [195, 195, 195];
 
-        const BLUE =
-          [0, 78, 145];
+      const dateReleve = toInputDate(releve.date_releve);
 
-        const ORANGE =
-          [205, 112, 45];
+      const relevesMemeDocument = releves.filter(
+        (item) =>
+          String(item.numero_abonne || '') === String(releve.numero_abonne || '') &&
+          toInputDate(item.date_releve) === dateReleve
+      );
 
-        const LIGHT_BLUE =
-          [239, 245, 251];
+      const relevesPDF = relevesMemeDocument.length > 0 ? relevesMemeDocument : [releve];
 
-        const LIGHT_ORANGE =
-          [252, 244, 237];
+      const elec =
+        relevesPDF.find((item) => item.type_compteur === 'ELECTRICITE') || null;
+      const eau =
+        relevesPDF.find((item) => item.type_compteur === 'EAU') || null;
 
-        const LIGHT_GRAY =
-          [247, 247, 247];
+      const abonnement = releve.numero_abonne || 'Non renseigné';
+      const nomAbonne =
+        [releve.abonne_prenom, releve.abonne_nom].filter(Boolean).join(' ') ||
+        'Non renseigné';
+      const adresse = releve.abonne_adresse || 'Non renseignée';
 
-        const DARK =
-          [35, 35, 35];
+      const moisFacture = new Date(
+        `${dateReleve || getToday()}T00:00:00`
+      ).toLocaleDateString('fr-FR', {
+        month: 'long',
+        year: 'numeric',
+      });
 
-        const GRAY =
-          [95, 95, 95];
+      const factureNumero = `REL-${String(dateReleve || getToday()).replaceAll('-', '')}-${String(
+        releve.id || 0
+      ).padStart(5, '0')}`;
 
-        /* =====================================================
-           DONNÉES ÉLECTRICITÉ / EAU
-        ===================================================== */
+      const safeText = (value, fallback = '—') =>
+        value === null || value === undefined || value === '' ? fallback : String(value);
 
-        const dateReleve =
-          toInputDate(
-            releve.date_releve
-          );
+      const drawLogo = (x, y) => {
+        doc.setFillColor(...ORANGE);
+        doc.circle(x + 6, y + 6, 5.5, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(8.5);
+        doc.text('J', x + 6, y + 9, { align: 'center' });
+      };
 
-        const relevesMemeDocument =
-          releves.filter(
-            (item) =>
-              String(
-                item.numero_abonne ||
-                  ''
-              ) ===
-                String(
-                  releve.numero_abonne ||
-                    ''
-                ) &&
-              toInputDate(
-                item.date_releve
-              ) ===
-                dateReleve
-          );
+      const drawSectionTitle = (title, x, sectionY, width = contentWidth) => {
+        doc.setFillColor(...BLUE);
+        doc.roundedRect(x, sectionY, width, 6, 1.2, 1.2, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7.2);
+        doc.text(title, x + 3, sectionY + 4.1);
+      };
 
-        const relevesPDF =
-          relevesMemeDocument.length >
-          0
-            ? relevesMemeDocument
-            : [releve];
+      /* =====================================================
+         EN-TÊTE STYLE FACTURE JIRAMA
+      ===================================================== */
+      drawLogo(margin, 8);
 
-        const elec =
-          relevesPDF.find(
-            (item) =>
-              item.type_compteur ===
-              'ELECTRICITE'
-          ) || null;
+      doc.setTextColor(...BLUE);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(15);
+      doc.text('JIRAMA', margin + 13, 14);
 
-        const eau =
-          relevesPDF.find(
-            (item) =>
-              item.type_compteur ===
-              'EAU'
-          ) || null;
+      doc.setTextColor(...ORANGE);
+      doc.setFontSize(13.5);
+      doc.text('JIRO SY RANO MALAGASY', pageWidth / 2 + 8, 13.5, { align: 'center' });
 
-        const abonnement =
-          releve.numero_abonne ||
-          'Non renseigné';
+      doc.setTextColor(...GRAY);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(5.7);
+      doc.text('Jiro sy Rano Malagasy — Document de suivi des consommations', pageWidth / 2 + 8, 18, {
+        align: 'center',
+      });
+      doc.text('NIF / Statistique / RCS : informations de référence du projet', pageWidth / 2 + 8, 22, {
+        align: 'center',
+      });
 
-        const nomAbonne =
-          [
-            releve.abonne_prenom,
-            releve.abonne_nom,
-          ]
-            .filter(Boolean)
-            .join(' ') ||
-          'Non renseigné';
+      doc.setDrawColor(...BLUE);
+      doc.setLineWidth(0.45);
+      doc.line(margin, 26, pageWidth - margin, 26);
 
-        const adresse =
-          releve.abonne_adresse ||
-          'Non renseignée';
+      /* =====================================================
+         BLOC FACTURE
+      ===================================================== */
+      doc.setFillColor(...LIGHT_ORANGE);
+      doc.roundedRect(margin, 29, contentWidth, 10, 1.5, 1.5, 'F');
 
-        const moisFacture =
-          new Date(
-            `${dateReleve || getToday()}T00:00:00`
-          ).toLocaleDateString(
-            'fr-FR',
-            {
-              month:
-                'long',
-              year:
-                'numeric',
-            }
-          );
+      doc.setTextColor(...DARK);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8.3);
+      doc.text(`Votre facture mois de : ${moisFacture}`, margin + 3, 35.2);
 
-        const factureNumero =
-          `REL-${String(
-            dateReleve ||
-              getToday()
-          ).replaceAll(
-            '-',
-            ''
-          )}-${String(
-            releve.id || 0
-          ).padStart(
-            5,
-            '0'
-          )}`;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.8);
+      doc.text(`N° : ${factureNumero}`, pageWidth - margin - 3, 35.2, { align: 'right' });
 
-        /* =====================================================
-           LOGO
-        ===================================================== */
+      let y = 42;
 
-        const drawLogo =
-          (
-            x,
-            y
-          ) => {
-            doc.setFillColor(
-              ...ORANGE
-            );
+      /* =====================================================
+         INFORMATIONS FACTURE / CLIENT
+      ===================================================== */
+      const infoRows = [
+        ['Titulaire du compte', nomAbonne, 'Adresse installation', adresse],
+        ['Référence client', abonnement, 'Catégorie', 'Particulier'],
+        ['Référence encaissement', safeText(releve.reference_encaissement, factureNumero), 'Agence', 'Antsirabe'],
+        ['Date d’édition', formatDate(dateReleve), 'Date limite de paiement', '—'],
+        ['N° compteur électricité', elec?.numero_compteur || '—', 'N° compteur eau', eau?.numero_compteur || '—'],
+      ];
 
-            doc.circle(
-              x + 7,
-              y + 7,
-              6.5,
-              'F'
-            );
+      autoTable(doc, {
+        startY: y,
+        theme: 'grid',
+        margin: { left: margin, right: margin },
+        tableWidth: contentWidth,
+        pageBreak: 'avoid',
+        styles: {
+          font: 'helvetica',
+          fontSize: 5.8,
+          textColor: DARK,
+          cellPadding: 1.05,
+          lineColor: BORDER,
+          lineWidth: 0.2,
+          valign: 'middle',
+          overflow: 'linebreak',
+          minCellHeight: 5,
+        },
+        columnStyles: {
+          0: { fontStyle: 'bold', fillColor: LIGHT_GRAY, cellWidth: 31 },
+          1: { cellWidth: 57 },
+          2: { fontStyle: 'bold', fillColor: LIGHT_GRAY, cellWidth: 31 },
+          3: { cellWidth: 69 },
+        },
+        body: infoRows,
+      });
 
-            doc.setTextColor(
-              255,
-              255,
-              255
-            );
+      y = doc.lastAutoTable.finalY + 2.5;
 
-            doc.setFont(
-              'helvetica',
-              'bold'
-            );
+      /* =====================================================
+         RELEVÉS ÉLECTRICITÉ / EAU
+      ===================================================== */
+      drawSectionTitle('RELEVÉS ET CONSOMMATIONS', margin, y);
+      y += 6.8;
 
-            doc.setFontSize(
-              10
-            );
+      const indexRows = [
+        [
+          'Nouvel index',
+          elec ? Number(elec.nouvel_index).toLocaleString('fr-FR') : '—',
+          elec ? formatDate(elec.date_releve) : '—',
+          'Nouvel index',
+          eau ? Number(eau.nouvel_index).toLocaleString('fr-FR') : '—',
+          eau ? formatDate(eau.date_releve) : '—',
+        ],
+        [
+          'Ancien index',
+          elec ? Number(elec.ancien_index).toLocaleString('fr-FR') : '—',
+          elec?.date_ancien_releve ? formatDate(elec.date_ancien_releve) : '—',
+          'Ancien index',
+          eau ? Number(eau.ancien_index).toLocaleString('fr-FR') : '—',
+          eau?.date_ancien_releve ? formatDate(eau.date_ancien_releve) : '—',
+        ],
+        [
+          'Consommation totale',
+          elec ? `${formatAmount(elec.consommation)} kWh` : '—',
+          '',
+          'Consommation totale',
+          eau ? `${formatAmount(eau.consommation)} m³` : '—',
+          '',
+        ],
+        [
+          'Nombre de jours',
+          elec?.nombre_jours ?? '—',
+          '',
+          'Nombre de jours',
+          eau?.nombre_jours ?? '—',
+          '',
+        ],
+      ];
 
-            doc.text(
-              'J',
-              x + 7,
-              y + 10,
-              {
-                align:
-                  'center',
-              }
-            );
-          };
+      autoTable(doc, {
+        startY: y,
+        theme: 'grid',
+        margin: { left: margin, right: margin },
+        tableWidth: contentWidth,
+        pageBreak: 'avoid',
+        styles: {
+          font: 'helvetica',
+          fontSize: 5.8,
+          textColor: DARK,
+          cellPadding: 1.0,
+          lineColor: BORDER,
+          lineWidth: 0.2,
+          valign: 'middle',
+        },
+        headStyles: {
+          fillColor: BLUE,
+          textColor: 255,
+          fontStyle: 'bold',
+          fontSize: 6,
+          halign: 'center',
+        },
+        columnStyles: {
+          0: { fontStyle: 'bold', cellWidth: 31 },
+          1: { cellWidth: 29, halign: 'center' },
+          2: { cellWidth: 28, halign: 'center' },
+          3: { fontStyle: 'bold', cellWidth: 31 },
+          4: { cellWidth: 29, halign: 'center' },
+          5: { cellWidth: 28, halign: 'center' },
+        },
+        head: [['ÉLECTRICITÉ', 'Index', 'Date', 'EAU', 'Index', 'Date']],
+        body: indexRows,
+      });
 
-        /* =====================================================
-           EN-TÊTE
-        ===================================================== */
+      y = doc.lastAutoTable.finalY + 2.5;
 
-        doc.setDrawColor(
-          ...BLUE
-        );
+      /* =====================================================
+         FACTURATION — MÊMES CALCULS / DONNÉES EXISTANTS
+      ===================================================== */
+      drawSectionTitle('DÉTAIL DE LA FACTURATION', margin, y);
+      y += 6.8;
 
-        doc.setLineWidth(
-          0.7
-        );
+      const elecConso = Number(elec?.consommation || 0);
+      const eauConso = Number(eau?.consommation || 0);
+      const elecUnit = 340;
+      const eauUnit = 415;
+      const elecMontantConso = elecConso * elecUnit;
+      const eauMontantConso = eauConso * eauUnit;
 
-        doc.line(
-          15,
-          34,
-          pageWidth - 15,
-          34
-        );
+      const billingRows = [
+        ['1ère tranche de consommation', elec ? formatAmount(elecConso) : '—', '340.00', elec ? formatAmount(elecMontantConso) : '—', eau ? formatAmount(eauConso) : '—', '415.00', eau ? formatAmount(eauMontantConso) : '—'],
+        ['2ème tranche de consommation', '', '560.00', '', '', '', ''],
+        ['3ème tranche de consommation', '', '', '', '', '', ''],
+        ['4ème tranche de consommation', '', '', '', '', '', ''],
+        ['Redevance JIRAMA', '', '', '8 000.00', '', '', ''],
+        ['Prime fixe JIRAMA', '', '3 018.00', '3 018.00', '', '', '3 770.00'],
+        ['Autres frais', '', '', '6 639.60', '', '', ''],
+        ['SOUS TOTAL JIRAMA (1)', '', '', formatAmount(FACTURATION_TEMPORAIRE.sousTotalElectricite), '', '', formatAmount(FACTURATION_TEMPORAIRE.sousTotalEau)],
+        ['Taxe communale', '', '', formatAmount(FACTURATION_TEMPORAIRE.taxeCommunaleElectricite), '', '', formatAmount(FACTURATION_TEMPORAIRE.taxeCommunaleEau)],
+        ['Surtaxe communale', '', '', formatAmount(FACTURATION_TEMPORAIRE.surtaxeCommunaleElectricite), '', '', formatAmount(FACTURATION_TEMPORAIRE.surtaxeCommunaleEau)],
+        ['Fonds national de l’énergie durable', '', '', formatAmount(FACTURATION_TEMPORAIRE.fondsEnergieElectricite), '', '', formatAmount(FACTURATION_TEMPORAIRE.fondsEnergieEau)],
+        ['Redevance assainissement eaux usées', '', '', '0.00', '', '', '0.00'],
+        ['Sous total Taxes et Redevances (2)', '', '', '1 697.28', '', '', '105.83'],
+        ['Montant TVA de la facture', '', '', formatAmount(FACTURATION_TEMPORAIRE.tvaElectricite), '', '', formatAmount(FACTURATION_TEMPORAIRE.tvaEau)],
+        ['TOTAL (3) = (1) + (2) + TVA', '', '', formatAmount(FACTURATION_TEMPORAIRE.totalElectricite), '', '', formatAmount(FACTURATION_TEMPORAIRE.totalEau)],
+        ['Déduction sur facture estimée antérieure (4)', '', '', '0.00', '', '', '0.00'],
+        ['MONTANT ELEC/EAU : (3) - (4)', '', '', formatAmount(FACTURATION_TEMPORAIRE.totalElectricite), '', '', formatAmount(FACTURATION_TEMPORAIRE.totalEau)],
+      ];
 
-        drawLogo(
-          15,
-          9
-        );
-
-        doc.setTextColor(
-          ...BLUE
-        );
-
-        doc.setFont(
-          'helvetica',
-          'bold'
-        );
-
-        doc.setFontSize(
-          22
-        );
-
-        doc.text(
-          'JIRAMA',
-          29,
-          16
-        );
-
-        doc.setTextColor(
-          ...ORANGE
-        );
-
-        doc.setFontSize(
-          17
-        );
-
-        doc.text(
-          'JIRO SY RANO MALAGASY',
-          pageWidth /
-            2,
-          17,
-          {
-            align:
-              'center',
+      autoTable(doc, {
+        startY: y,
+        theme: 'grid',
+        margin: { left: margin, right: margin },
+        tableWidth: contentWidth,
+        pageBreak: 'avoid',
+        styles: {
+          font: 'helvetica',
+          fontSize: 4.85,
+          textColor: DARK,
+          cellPadding: 0.72,
+          lineColor: [185, 185, 185],
+          lineWidth: 0.18,
+          valign: 'middle',
+          overflow: 'linebreak',
+          minCellHeight: 3.7,
+        },
+        headStyles: {
+          fillColor: BLUE,
+          textColor: 255,
+          fontStyle: 'bold',
+          halign: 'center',
+          fontSize: 4.9,
+        },
+        columnStyles: {
+          0: { cellWidth: 61, fontStyle: 'bold' },
+          1: { cellWidth: 21, halign: 'right' },
+          2: { cellWidth: 21, halign: 'right' },
+          3: { cellWidth: 23, halign: 'right' },
+          4: { cellWidth: 18, halign: 'right' },
+          5: { cellWidth: 21, halign: 'right' },
+          6: { cellWidth: 23, halign: 'right' },
+        },
+        head: [['Désignation', 'Qté Elec', 'PU', 'Montant Elec', 'Qté Eau', 'PU', 'Montant Eau']],
+        body: billingRows,
+        didParseCell: (data) => {
+          if ([7, 12, 14, 16].includes(data.row.index)) {
+            data.cell.styles.fontStyle = 'bold';
           }
-        );
-
-        doc.setTextColor(
-          ...GRAY
-        );
-
-        doc.setFont(
-          'helvetica',
-          'normal'
-        );
-
-        doc.setFontSize(
-          7
-        );
-
-        doc.text(
-          'Document de suivi des consommations',
-          pageWidth /
-            2,
-          22,
-          {
-            align:
-              'center',
+          if ([14, 16].includes(data.row.index)) {
+            data.cell.styles.fillColor = data.column.index === 0 ? LIGHT_BLUE : [250, 250, 250];
           }
-        );
-
-        doc.setFontSize(
-          6.5
-        );
-
-        doc.text(
-          'APERÇU — DONNÉES TARIFAIRES TEMPORAIRES',
-          pageWidth /
-            2,
-          27,
-          {
-            align:
-              'center',
-          }
-        );
-
-        /* =====================================================
-           TITRE
-        ===================================================== */
-
-        doc.setFillColor(
-          ...LIGHT_ORANGE
-        );
-
-        doc.roundedRect(
-          15,
-          38,
-          pageWidth - 30,
-          13,
-          2,
-          2,
-          'F'
-        );
-
-        doc.setTextColor(
-          ...DARK
-        );
-
-        doc.setFont(
-          'helvetica',
-          'bold'
-        );
-
-        doc.setFontSize(
-          11
-        );
-
-        doc.text(
-          `Votre relevé / aperçu de facture — ${moisFacture}`,
-          19,
-          46
-        );
-
-        doc.setFont(
-          'helvetica',
-          'normal'
-        );
-
-        doc.setFontSize(
-          7.5
-        );
-
-        doc.text(
-          `N° document : ${factureNumero}`,
-          pageWidth - 19,
-          46,
-          {
-            align:
-              'right',
-          }
-        );
-
-        /* =====================================================
-           INFORMATIONS CLIENT
-        ===================================================== */
-
-        let y =
-          56;
-
-        doc.setTextColor(
-          ...DARK
-        );
-
-        doc.setFontSize(
-          7.5
-        );
-
-        const infoRows =
-          [
-            [
-              'Titulaire du compte',
-              nomAbonne,
-              'Adresse installation',
-              adresse,
-            ],
-            [
-              'Référence client',
-              abonnement,
-              'Catégorie',
-              'Particulier',
-            ],
-            [
-              'N° compteur électricité',
-              elec?.numero_compteur ||
-                '—',
-              'N° compteur eau',
-              eau?.numero_compteur ||
-                '—',
-            ],
-            [
-              'Commune',
-              '—',
-              'Agence',
-              'Antsirabe',
-            ],
-          ];
-
-        autoTable(
-          doc,
-          {
-            startY: y,
-            theme:
-              'grid',
-            margin: {
-              left: 15,
-              right: 15,
-            },
-            tableWidth:
-              pageWidth -
-              30,
-            styles: {
-              font:
-                'helvetica',
-              fontSize:
-                7,
-              textColor:
-                DARK,
-              cellPadding:
-                2,
-              lineColor:
-                [
-                  205,
-                  205,
-                  205,
-                ],
-              lineWidth:
-                0.25,
-            },
-            columnStyles: {
-              0: {
-                fontStyle:
-                  'bold',
-                fillColor:
-                  LIGHT_GRAY,
-                cellWidth:
-                  35,
-              },
-              1: {
-                cellWidth:
-                  52,
-              },
-              2: {
-                fontStyle:
-                  'bold',
-                fillColor:
-                  LIGHT_GRAY,
-                cellWidth:
-                  35,
-              },
-              3: {
-                cellWidth:
-                  53,
-              },
-            },
-            body:
-              infoRows,
-          }
-        );
-
-        y =
-          doc.lastAutoTable
-            .finalY +
-          5;
-
-        /* =====================================================
-           DÉTAIL RELEVÉS
-        ===================================================== */
-
-        const indexRows =
-          [
-            [
-              'Nouvel index',
-              elec
-                ? Number(
-                    elec.nouvel_index
-                  ).toLocaleString(
-                    'fr-FR'
-                  )
-                : '—',
-              elec
-                ? formatDate(
-                    elec.date_releve
-                  )
-                : '—',
-
-              'Nouvel index',
-              eau
-                ? Number(
-                    eau.nouvel_index
-                  ).toLocaleString(
-                    'fr-FR'
-                  )
-                : '—',
-              eau
-                ? formatDate(
-                    eau.date_releve
-                  )
-                : '—',
-            ],
-
-            [
-              'Ancien index',
-              elec
-                ? Number(
-                    elec.ancien_index
-                  ).toLocaleString(
-                    'fr-FR'
-                  )
-                : '—',
-              elec?.date_ancien_releve
-                ? formatDate(
-                    elec.date_ancien_releve
-                  )
-                : '—',
-
-              'Ancien index',
-              eau
-                ? Number(
-                    eau.ancien_index
-                  ).toLocaleString(
-                    'fr-FR'
-                  )
-                : '—',
-              eau?.date_ancien_releve
-                ? formatDate(
-                    eau.date_ancien_releve
-                  )
-                : '—',
-            ],
-
-            [
-              'Consommation totale',
-              elec
-                ? `${formatAmount(
-                    elec.consommation
-                  )} kWh`
-                : '—',
-              '',
-              'Consommation totale',
-              eau
-                ? `${formatAmount(
-                    eau.consommation
-                  )} m³`
-                : '—',
-              '',
-            ],
-
-            [
-              'Nombre de jours',
-              elec?.nombre_jours ??
-                '—',
-              '',
-              'Nombre de jours',
-              eau?.nombre_jours ??
-                '—',
-              '',
-            ],
-
-            [
-              'Tarif',
-              '20 - Économique',
-              '',
-              'Tarif',
-              '50',
-              '',
-            ],
-          ];
-
-        autoTable(
-          doc,
-          {
-            startY: y,
-            theme:
-              'grid',
-            margin: {
-              left: 15,
-              right: 15,
-            },
-            styles: {
-              font:
-                'helvetica',
-              fontSize:
-                7,
-              textColor:
-                DARK,
-              cellPadding:
-                2.1,
-              lineColor:
-                [
-                  195,
-                  195,
-                  195,
-                ],
-              lineWidth:
-                0.25,
-              valign:
-                'middle',
-            },
-            headStyles: {
-              fillColor:
-                BLUE,
-              textColor:
-                255,
-              fontStyle:
-                'bold',
-              halign:
-                'center',
-            },
-            columnStyles: {
-              0: {
-                fontStyle:
-                  'bold',
-                cellWidth:
-                  31,
-              },
-              1: {
-                cellWidth:
-                  29,
-                halign:
-                  'center',
-              },
-              2: {
-                cellWidth:
-                  24,
-                halign:
-                  'center',
-              },
-              3: {
-                fontStyle:
-                  'bold',
-                cellWidth:
-                  31,
-              },
-              4: {
-                cellWidth:
-                  29,
-                halign:
-                  'center',
-              },
-              5: {
-                cellWidth:
-                  24,
-                halign:
-                  'center',
-              },
-            },
-            head:
-              [
-                [
-                  'ELECTRICITÉ',
-                  'Index',
-                  'Date',
-                  'EAU',
-                  'Index',
-                  'Date',
-                ],
-              ],
-            body:
-              indexRows,
-          }
-        );
-
-        y =
-          doc.lastAutoTable
-            .finalY +
-          4;
-
-        /* =====================================================
-           TABLEAU FACTURATION
-        ===================================================== */
-
-        const elecConso =
-          Number(
-            elec?.consommation ||
-              0
-          );
-
-        const eauConso =
-          Number(
-            eau?.consommation ||
-              0
-          );
-
-        const elecUnit =
-          340;
-
-        const eauUnit =
-          415;
-
-        const elecMontantConso =
-          elecConso *
-          elecUnit;
-
-        const eauMontantConso =
-          eauConso *
-          eauUnit;
-
-        const billingRows =
-          [
-            [
-              '1ère tranche de consommation',
-              elec
-                ? `${formatAmount(
-                    elecConso
-                  )}`
-                : '—',
-              '340.00',
-              elec
-                ? formatAmount(
-                    elecMontantConso
-                  )
-                : '—',
-
-              eau
-                ? `${formatAmount(
-                    eauConso
-                  )}`
-                : '—',
-              '415.00',
-              eau
-                ? formatAmount(
-                    eauMontantConso
-                  )
-                : '—',
-            ],
-
-            [
-              '2ème tranche de consommation',
-              '',
-              '560.00',
-              '',
-              '',
-              '',
-              '',
-            ],
-
-            [
-              '3ème tranche de consommation',
-              '',
-              '',
-              '',
-              '',
-              '',
-              '',
-            ],
-
-            [
-              '4ème tranche de consommation',
-              '',
-              '',
-              '',
-              '',
-              '',
-              '',
-            ],
-
-            [
-              'Redevance JIRAMA',
-              '',
-              '',
-              '8 000.00',
-              '',
-              '',
-              '',
-            ],
-
-            [
-              'Prime fixe JIRAMA',
-              '',
-              '3 018.00',
-              '3 018.00',
-              '',
-              '',
-              '3 770.00',
-            ],
-
-            [
-              'Autres frais',
-              '',
-              '',
-              '6 639.60',
-              '',
-              '',
-              '',
-            ],
-
-            [
-              'SOUS TOTAL JIRAMA (1)',
-              '',
-              '',
-              formatAmount(
-                FACTURATION_TEMPORAIRE
-                  .sousTotalElectricite
-              ),
-              '',
-              '',
-              formatAmount(
-                FACTURATION_TEMPORAIRE
-                  .sousTotalEau
-              ),
-            ],
-
-            [
-              'Taxe communale',
-              '',
-              '',
-              formatAmount(
-                FACTURATION_TEMPORAIRE
-                  .taxeCommunaleElectricite
-              ),
-              '',
-              '',
-              formatAmount(
-                FACTURATION_TEMPORAIRE
-                  .taxeCommunaleEau
-              ),
-            ],
-
-            [
-              'Surtaxe communale',
-              '',
-              '',
-              formatAmount(
-                FACTURATION_TEMPORAIRE
-                  .surtaxeCommunaleElectricite
-              ),
-              '',
-              '',
-              formatAmount(
-                FACTURATION_TEMPORAIRE
-                  .surtaxeCommunaleEau
-              ),
-            ],
-
-            [
-              'Fonds national de l’énergie durable',
-              '',
-              '',
-              formatAmount(
-                FACTURATION_TEMPORAIRE
-                  .fondsEnergieElectricite
-              ),
-              '',
-              '',
-              formatAmount(
-                FACTURATION_TEMPORAIRE
-                  .fondsEnergieEau
-              ),
-            ],
-
-            [
-              'Redevance assainissement eaux usées',
-              '',
-              '',
-              '0.00',
-              '',
-              '',
-              '0.00',
-            ],
-
-            [
-              'Sous total Taxes et Redevances (2)',
-              '',
-              '',
-              '1 697.28',
-              '',
-              '',
-              '105.83',
-            ],
-
-            [
-              'Montant TVA de la facture',
-              '',
-              '',
-              formatAmount(
-                FACTURATION_TEMPORAIRE
-                  .tvaElectricite
-              ),
-              '',
-              '',
-              formatAmount(
-                FACTURATION_TEMPORAIRE
-                  .tvaEau
-              ),
-            ],
-
-            [
-              'TOTAL (3) = (1) + (2) + TVA',
-              '',
-              '',
-              formatAmount(
-                FACTURATION_TEMPORAIRE
-                  .totalElectricite
-              ),
-              '',
-              '',
-              formatAmount(
-                FACTURATION_TEMPORAIRE
-                  .totalEau
-              ),
-            ],
-
-            [
-              'Déduction sur facture estimée antérieure (4)',
-              '',
-              '',
-              '0.00',
-              '',
-              '',
-              '0.00',
-            ],
-
-            [
-              'MONTANT ELEC/EAU : (3) - (4)',
-              '',
-              '',
-              formatAmount(
-                FACTURATION_TEMPORAIRE
-                  .totalElectricite
-              ),
-              '',
-              '',
-              formatAmount(
-                FACTURATION_TEMPORAIRE
-                  .totalEau
-              ),
-            ],
-          ];
-
-        autoTable(
-          doc,
-          {
-            startY: y,
-            theme:
-              'grid',
-            margin: {
-              left: 15,
-              right: 15,
-            },
-            styles: {
-              font:
-                'helvetica',
-              fontSize:
-                6.4,
-              textColor:
-                DARK,
-              cellPadding:
-                1.5,
-              lineColor:
-                [
-                  185,
-                  185,
-                  185,
-                ],
-              lineWidth:
-                0.22,
-              valign:
-                'middle',
-            },
-            headStyles: {
-              fillColor:
-                BLUE,
-              textColor:
-                255,
-              fontStyle:
-                'bold',
-              halign:
-                'center',
-              fontSize:
-                6.5,
-            },
-            columnStyles: {
-              0: {
-                cellWidth:
-                  62,
-                fontStyle:
-                  'bold',
-              },
-              1: {
-                cellWidth:
-                  23,
-                halign:
-                  'right',
-              },
-              2: {
-                cellWidth:
-                  23,
-                halign:
-                  'right',
-              },
-              3: {
-                cellWidth:
-                  23,
-                halign:
-                  'right',
-              },
-              4: {
-                cellWidth:
-                  18,
-                halign:
-                  'right',
-              },
-              5: {
-                cellWidth:
-                  23,
-                halign:
-                  'right',
-              },
-              6: {
-                cellWidth:
-                  23,
-                halign:
-                  'right',
-              },
-            },
-            head:
-              [
-                [
-                  'Désignation',
-                  'Quantité Elec',
-                  'Prix unitaire',
-                  'Montant Elec',
-                  'Quantité Eau',
-                  'Prix unitaire',
-                  'Montant Eau',
-                ],
-              ],
-            body:
-              billingRows,
-            didParseCell:
-              (
-                data
-              ) => {
-                if (
-                  data.row.index ===
-                    7 ||
-                  data.row.index ===
-                    12 ||
-                  data.row.index ===
-                    14 ||
-                  data.row.index ===
-                    16
-                ) {
-                  data.cell.styles.fontStyle =
-                    'bold';
-                }
-              },
-          }
-        );
-
-        y =
-          doc.lastAutoTable
-            .finalY +
-          4;
-
-        /* =====================================================
-           MONTANTS
-        ===================================================== */
-
-        autoTable(
-          doc,
-          {
-            startY: y,
-            theme:
-              'grid',
-            margin: {
-              left: 15,
-              right: 15,
-            },
-            styles: {
-              font:
-                'helvetica',
-              fontSize:
-                8,
-              textColor:
-                DARK,
-              cellPadding:
-                2.5,
-            },
-            body:
-              [
-                [
-                  'MONTANT FACTURE (5)',
-                  `${formatAmount(
-                    FACTURATION_TEMPORAIRE
-                      .montantAPayer
-                  )} Ar`,
-                  'NET À PAYER (5) - (6)',
-                  `${formatAmount(
-                    FACTURATION_TEMPORAIRE
-                      .netAPayer
-                  )} Ar`,
-                ],
-              ],
-            columnStyles: {
-              0: {
-                fontStyle:
-                  'bold',
-                fillColor:
-                  LIGHT_BLUE,
-                cellWidth:
-                  48,
-              },
-              1: {
-                fontStyle:
-                  'bold',
-                halign:
-                  'right',
-                fillColor:
-                  LIGHT_BLUE,
-                cellWidth:
-                  42,
-              },
-              2: {
-                fontStyle:
-                  'bold',
-                fillColor:
-                  LIGHT_ORANGE,
-                cellWidth:
-                  48,
-              },
-              3: {
-                fontStyle:
-                  'bold',
-                halign:
-                  'right',
-                fillColor:
-                  LIGHT_ORANGE,
-                cellWidth:
-                  42,
-              },
-            },
-          }
-        );
-
-        y =
-          doc.lastAutoTable
-            .finalY +
-          5;
-
-        /* =====================================================
-           HISTORIQUE
-        ===================================================== */
-
-        const historique =
-          releves
-            .filter(
-              (item) =>
-                String(
-                  item.numero_abonne ||
-                    ''
-                ) ===
-                String(
-                  releve.numero_abonne ||
-                    ''
-                )
-            )
-            .sort(
-              (a, b) =>
-                new Date(
-                  b.date_releve
-                ) -
-                new Date(
-                  a.date_releve
-                )
-            )
-            .slice(
-              0,
-              3
-            );
-
-        doc.setTextColor(
-          ...DARK
-        );
-
-        doc.setFont(
-          'helvetica',
-          'bold'
-        );
-
-        doc.setFontSize(
-          8
-        );
-
-        doc.text(
-          'Historique des consommations des 3 derniers relevés',
-          15,
-          y
-        );
-
-        y += 2;
-
-        autoTable(
-          doc,
-          {
-            startY:
-              y + 2,
-            theme:
-              'grid',
-            margin: {
-              left: 15,
-              right: 15,
-            },
-            styles: {
-              font:
-                'helvetica',
-              fontSize:
-                7,
-              cellPadding:
-                2,
-              halign:
-                'center',
-            },
-            headStyles: {
-              fillColor:
-                BLUE,
-              textColor:
-                255,
-              fontStyle:
-                'bold',
-            },
-            head:
-              [
-                [
-                  'Période',
-                  'Cons. élec. (kWh)',
-                  'Cons. eau (m³)',
-                ],
-              ],
-            body:
-              historique.length
-                ? historique.map(
-                    (item) => [
-                      formatDate(
-                        item.date_releve
-                      ),
-                      item.type_compteur ===
-                        'ELECTRICITE'
-                        ? formatAmount(
-                            item.consommation
-                          )
-                        : '—',
-                      item.type_compteur ===
-                        'EAU'
-                        ? formatAmount(
-                            item.consommation
-                          )
-                        : '—',
-                    ]
-                  )
-                : [
-                    [
-                      'Aucun historique',
-                      '—',
-                      '—',
-                    ],
-                  ],
-          }
-        );
-
-        y =
-          doc.lastAutoTable
-            .finalY +
-          4;
-
-        /* =====================================================
-           NOTE
-        ===================================================== */
-
-        doc.setFillColor(
-          255,
-          248,
-          230
-        );
-
-        doc.roundedRect(
-          15,
-          y,
-          pageWidth - 30,
-          18,
-          2,
-          2,
-          'F'
-        );
-
-        doc.setTextColor(
-          170,
-          100,
-          0
-        );
-
-        doc.setFont(
-          'helvetica',
-          'bold'
-        );
-
-        doc.setFontSize(
-          6.8
-        );
-
-        doc.text(
-          'APERÇU DE PROJET — NE CONSTITUE PAS UNE FACTURE OFFICIELLE',
-          19,
-          y + 5
-        );
-
-        doc.setFont(
-          'helvetica',
-          'normal'
-        );
-
-        doc.setTextColor(
-          105,
-          85,
-          55
-        );
-
-        doc.text(
-          'Tarifs, prix unitaires, taxes, surtaxes, TVA et montants sont temporaires',
-          19,
-          y + 10
-        );
-
-        doc.text(
-          'et doivent être validés selon les règles réelles avant utilisation officielle.',
-          19,
-          y + 14.5
-        );
-
-        /* =====================================================
-           COUPON AUTO-RELEVÉ
-        ===================================================== */
-
-        y += 23;
-
-        if (
-          y + 46 >
-          pageHeight - 17
-        ) {
-          doc.addPage();
-
-          y = 20;
-        }
-
-        doc.setDrawColor(
-          130,
-          130,
-          130
-        );
-
-        doc.setLineDashPattern(
-          [2, 2],
-          0
-        );
-
-        doc.line(
-          15,
-          y,
-          pageWidth - 15,
-          y
-        );
-
-        doc.setLineDashPattern(
-          [],
-          0
-        );
-
-        doc.setTextColor(
-          ...BLUE
-        );
-
-        doc.setFont(
-          'helvetica',
-          'bold'
-        );
-
-        doc.setFontSize(
-          8
-        );
-
-        doc.text(
-          'COUPON AUTO-RELEVÉ',
-          pageWidth /
-            2,
-          y + 7,
-          {
-            align:
-              'center',
-          }
-        );
-
-        doc.setFont(
-          'helvetica',
-          'normal'
-        );
-
-        doc.setTextColor(
-          ...GRAY
-        );
-
-        doc.setFontSize(
-          6.8
-        );
-
-        doc.text(
-          `Référence client : ${abonnement}`,
-          18,
-          y + 15
-        );
-
-        doc.text(
-          `Adresse : ${adresse}`,
-          18,
-          y + 20
-        );
-
-        doc.text(
-          'Date du prochain relevé : ................................',
-          18,
-          y + 26
-        );
-
-        doc.text(
-          'Index électricité : ................................',
-          18,
-          y + 32
-        );
-
-        doc.text(
-          'Index eau : ................................',
-          18,
-          y + 38
-        );
-
-        doc.text(
-          'Contact téléphonique : ................................',
-          pageWidth /
-            2,
-          y + 26
-        );
-
-        doc.text(
-          'Adresse e-mail : ................................',
-          pageWidth /
-            2,
-          y + 32
-        );
-
-        /* =====================================================
-           CODE-BARRES VISUEL
-        ===================================================== */
-
-        let barcodeX =
-          pageWidth -
-          63;
-
-        const barcodeY =
-          y + 8;
-
-        for (
-          let i = 0;
-          i < 36;
-          i++
-        ) {
-          const barWidth =
-            i % 5 ===
-            0
-              ? 1.3
-              : i % 2 ===
-                0
-              ? 0.8
-              : 0.45;
-
-          const barHeight =
-            i % 3 ===
-            0
-              ? 13
-              : 10;
-
-          doc.setFillColor(
-            30,
-            30,
-            30
-          );
-
-          doc.rect(
-            barcodeX,
-            barcodeY,
-            barWidth,
-            barHeight,
-            'F'
-          );
-
-          barcodeX +=
-            barWidth +
-            0.9;
-        }
-
-        /* =====================================================
-           PIED DE PAGE
-        ===================================================== */
-
-        const totalPages =
-          doc.internal.getNumberOfPages();
-
-        for (
-          let page = 1;
-          page <=
-          totalPages;
-          page++
-        ) {
-          doc.setPage(
-            page
-          );
-
-          doc.setDrawColor(
-            200,
-            200,
-            200
-          );
-
-          doc.line(
-            15,
-            pageHeight -
-              12,
-            pageWidth -
-              15,
-            pageHeight -
-              12
-          );
-
-          doc.setFont(
-            'helvetica',
-            'normal'
-          );
-
-          doc.setFontSize(
-            6.5
-          );
-
-          doc.setTextColor(
-            120,
-            120,
-            120
-          );
-
-          doc.text(
-            `Document généré le ${new Date().toLocaleDateString(
-              'fr-FR'
-            )} — Projet L3 JIRAMA`,
-            15,
-            pageHeight -
-              6
-          );
-
-          doc.text(
-            `Page ${page} / ${totalPages}`,
-            pageWidth -
-              15,
-            pageHeight -
-              6,
-            {
-              align:
-                'right',
-            }
-          );
-        }
-
-        /* =====================================================
-           ENREGISTREMENT PDF
-        ===================================================== */
-
-        const safeName =
-          (
-            releve.numero_abonne ||
-            releve.numero_compteur ||
-            'releve'
-          )
-            .toString()
-            .replace(
-              /[^a-zA-Z0-9_-]/g,
-              '_'
-            );
-
-        const safeDate =
-          toInputDate(
-            releve.date_releve
-          ).replaceAll(
-            '-',
-            ''
-          );
-
-        doc.save(
-          `facture_apercu_${safeName}_${safeDate}.pdf`
-        );
-      } catch (error) {
-        console.error(
-          'Erreur génération PDF :',
-          error
-        );
-
-        setError(
-          'Impossible de générer le PDF.'
+        },
+      });
+
+      y = doc.lastAutoTable.finalY + 2.5;
+
+      /* =====================================================
+         MONTANTS À PAYER
+      ===================================================== */
+      autoTable(doc, {
+        startY: y,
+        theme: 'grid',
+        margin: { left: margin, right: margin },
+        tableWidth: contentWidth,
+        pageBreak: 'avoid',
+        styles: {
+          font: 'helvetica',
+          fontSize: 6.5,
+          textColor: DARK,
+          cellPadding: 1.7,
+          valign: 'middle',
+        },
+        body: [[
+          'MONTANT FACTURE (5)',
+          `${formatAmount(FACTURATION_TEMPORAIRE.montantAPayer)} Ar`,
+          'NET À PAYER (5) - (6)',
+          `${formatAmount(FACTURATION_TEMPORAIRE.netAPayer)} Ar`,
+        ]],
+        columnStyles: {
+          0: { fontStyle: 'bold', fillColor: LIGHT_BLUE, cellWidth: 48 },
+          1: { fontStyle: 'bold', halign: 'right', fillColor: LIGHT_BLUE, cellWidth: 42 },
+          2: { fontStyle: 'bold', fillColor: LIGHT_ORANGE, cellWidth: 48 },
+          3: { fontStyle: 'bold', halign: 'right', fillColor: LIGHT_ORANGE, cellWidth: 42 },
+        },
+      });
+
+      y = doc.lastAutoTable.finalY + 2.5;
+
+      /* =====================================================
+         HISTORIQUE
+      ===================================================== */
+      doc.setTextColor(...DARK);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6.7);
+      doc.text('Historique des consommations des 3 derniers relevés', margin, y);
+      y += 1.5;
+
+      const historique = releves
+        .filter(
+          (item) => String(item.numero_abonne || '') === String(releve.numero_abonne || '')
+        )
+        .sort((a, b) => new Date(b.date_releve) - new Date(a.date_releve))
+        .slice(0, 3);
+
+      autoTable(doc, {
+        startY: y + 1.5,
+        theme: 'grid',
+        margin: { left: margin, right: margin },
+        tableWidth: contentWidth,
+        pageBreak: 'avoid',
+        styles: {
+          font: 'helvetica',
+          fontSize: 5.5,
+          cellPadding: 0.8,
+          halign: 'center',
+          textColor: DARK,
+          lineWidth: 0.18,
+        },
+        headStyles: {
+          fillColor: BLUE,
+          textColor: 255,
+          fontStyle: 'bold',
+        },
+        head: [['Période', 'Cons. élec. (kWh)', 'Cons. eau (m³)']],
+        body: historique.length
+          ? historique.map((item) => [
+              formatDate(item.date_releve),
+              item.type_compteur === 'ELECTRICITE' ? formatAmount(item.consommation) : '—',
+              item.type_compteur === 'EAU' ? formatAmount(item.consommation) : '—',
+            ])
+          : [['Aucun historique', '—', '—']],
+      });
+
+      y = doc.lastAutoTable.finalY + 2;
+
+      /* =====================================================
+         NOTE COURTE — CONSERVE L'INFORMATION EXISTANTE
+      ===================================================== */
+      doc.setFillColor(255, 248, 230);
+      doc.roundedRect(margin, y, contentWidth, 10, 1.2, 1.2, 'F');
+      doc.setTextColor(170, 100, 0);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(5.2);
+      doc.text('APERÇU DE PROJET — NE CONSTITUE PAS UNE FACTURE OFFICIELLE', margin + 3, y + 3.6);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(105, 85, 55);
+      doc.text('Tarifs, prix unitaires, taxes, surtaxes, TVA et montants sont temporaires et doivent être validés.', margin + 3, y + 7.2);
+
+      /* =====================================================
+         COUPON AUTO-RELEVÉ — TOUJOURS SUR LA MÊME PAGE
+      ===================================================== */
+      y += 12.5;
+
+      doc.setDrawColor(130, 130, 130);
+      doc.setLineWidth(0.25);
+      doc.setLineDashPattern([1.5, 1.5], 0);
+      doc.line(margin, y, pageWidth - margin, y);
+      doc.setLineDashPattern([], 0);
+
+      doc.setTextColor(...BLUE);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6.8);
+      doc.text('COUPON AUTO-RELEVÉ', pageWidth / 2, y + 5, { align: 'center' });
+
+      doc.setTextColor(...GRAY);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(5.3);
+      doc.text(`Référence client : ${abonnement}`, margin + 3, y + 11);
+      doc.text(`Adresse : ${adresse}`, margin + 3, y + 15.5);
+      doc.text('Date du prochain relevé : ................................', margin + 3, y + 20);
+      doc.text('Index électricité : ................................', margin + 3, y + 24.5);
+      doc.text('Index eau : ................................', margin + 3, y + 29);
+      doc.text('Contact téléphonique : ................................', pageWidth / 2 + 3, y + 20);
+      doc.text('Adresse e-mail : ................................', pageWidth / 2 + 3, y + 24.5);
+
+      /* =====================================================
+         CODE-BARRES VISUEL
+      ===================================================== */
+      let barcodeX = pageWidth - 63;
+      const barcodeY = y + 7;
+
+      for (let i = 0; i < 36; i += 1) {
+        const barWidth = i % 5 === 0 ? 1.15 : i % 2 === 0 ? 0.7 : 0.4;
+        const barHeight = i % 3 === 0 ? 11 : 8.5;
+
+        doc.setFillColor(30, 30, 30);
+        doc.rect(barcodeX, barcodeY, barWidth, barHeight, 'F');
+        barcodeX += barWidth + 0.75;
+      }
+
+      doc.setTextColor(...GRAY);
+      doc.setFontSize(4.7);
+      doc.text(factureNumero, pageWidth - 15, barcodeY + 14, { align: 'right' });
+
+      /* =====================================================
+         GARDE-FOU : UNE SEULE PAGE
+         Toutes les sections ont été compactées pour rester
+         dans la zone imprimable A4. Aucun addPage() n'est utilisé.
+      ===================================================== */
+      if (doc.internal.getNumberOfPages() !== 1) {
+        console.warn(
+          'Le contenu PDF a dépassé une page A4. Réduire les espacements avant production.'
         );
       }
-    };
 
+      /* =====================================================
+         PIED DE PAGE
+      ===================================================== */
+      const totalPages = doc.internal.getNumberOfPages();
+      doc.setPage(1);
+
+      doc.setDrawColor(200, 200, 200);
+      doc.setLineWidth(0.25);
+      doc.line(margin, pageHeight - 11, pageWidth - margin, pageHeight - 11);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(5.3);
+      doc.setTextColor(120, 120, 120);
+      doc.text('Document généré par l’application de suivi JIRAMA', margin, pageHeight - 5.5);
+      doc.text(`Page 1/${totalPages}`, pageWidth - margin, pageHeight - 5.5, { align: 'right' });
+
+      /* =====================================================
+         ENREGISTREMENT PDF
+      ===================================================== */
+      const safeName = (releve.numero_abonne || releve.numero_compteur || 'releve')
+        .toString()
+        .replace(/[^a-zA-Z0-9_-]/g, '_');
+
+      const safeDate = toInputDate(releve.date_releve).replaceAll('-', '');
+
+      doc.save(`facture-jirama-${safeName}-${safeDate}.pdf`);
+    } catch (error) {
+      console.error('Erreur génération PDF :', error);
+      setError('Impossible de générer le PDF.');
+    }
+  };
   /* =========================================================
      LABEL TARIFICATION TEMPORAIRE
   ========================================================== */
@@ -3243,199 +2213,436 @@ function RelevesPage() {
     };
 
   /* =========================================================
+     INTERFACE (rendu uniquement) : références, compteurs,
+     toast, raccourci « / », comportement de la modale.
+     Tous ces hooks sont placés AVANT le « if (!currentUser) ».
+  ========================================================== */
+  const searchRef = useRef(null);
+  const modalRef = useRef(null);
+  const closeRef = useRef(null);
+
+  closeRef.current = closeModal;
+
+  // Résultats de la recherche seule (sert aux compteurs des boutons de type)
+  const parRecherche = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    return releves.filter((releve) => {
+      const nomAbonne = `${releve.abonne_prenom || ''} ${
+        releve.abonne_nom || ''
+      }`
+        .trim()
+        .toLowerCase();
+
+      return (
+        !query ||
+        [
+          releve.numero_compteur,
+          releve.numero_abonne,
+          releve.type_compteur,
+          nomAbonne,
+          releve.saisie_par,
+        ].some((value) =>
+          String(value || '').toLowerCase().includes(query)
+        )
+      );
+    });
+  }, [releves, search]);
+
+  const compteursType = useMemo(
+    () => ({
+      '': parRecherche.length,
+      EAU: parRecherche.filter((r) => r.type_compteur === 'EAU').length,
+      ELECTRICITE: parRecherche.filter((r) => r.type_compteur !== 'EAU')
+        .length,
+    }),
+    [parRecherche]
+  );
+
+  // Indicateurs : l'eau et l'électricité ne sont jamais additionnées
+  const indicateurs = useMemo(() => {
+    const eau = { n: 0, conso: 0 };
+    const elec = { n: 0, conso: 0 };
+
+    releves.forEach((releve) => {
+      const conso = Number(releve.consommation) || 0;
+
+      if (releve.type_compteur === 'EAU') {
+        eau.n += 1;
+        eau.conso += conso;
+      } else {
+        elec.n += 1;
+        elec.conso += conso;
+      }
+    });
+
+    return { total: releves.length, eau, elec };
+  }, [releves]);
+
+  const reinitialiserFiltres = () => {
+    setSearch('');
+    setTypeFilter('');
+  };
+
+  // Le succès disparaît seul au bout de 4 s
+  useEffect(() => {
+    if (!success) return undefined;
+
+    const minuteur = setTimeout(() => setSuccess(''), 4000);
+    return () => clearTimeout(minuteur);
+  }, [success]);
+
+  // Raccourci « / » : focus sur la recherche
+  useEffect(() => {
+    const surTouche = (e) => {
+      if (e.key !== '/' || modalOpen || e.metaKey || e.ctrlKey || e.altKey) {
+        return;
+      }
+
+      const cible = e.target;
+      const saisie =
+        cible instanceof HTMLElement &&
+        (cible.isContentEditable ||
+          ['INPUT', 'TEXTAREA', 'SELECT'].includes(cible.tagName));
+
+      if (saisie) return;
+
+      e.preventDefault();
+      searchRef.current?.focus();
+    };
+
+    window.addEventListener('keydown', surTouche);
+    return () => window.removeEventListener('keydown', surTouche);
+  }, [modalOpen]);
+
+  // Modale : focus piégé, Échap, scroll de la page bloqué
+  useEffect(() => {
+    if (!modalOpen) return undefined;
+
+    const precedent = document.activeElement;
+    const overflowAvant = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const focusables = () =>
+      Array.from(
+        modalRef.current?.querySelectorAll(
+          'button:not([disabled]), input:not([readonly]), textarea, select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+        ) || []
+      );
+
+    const focusInitial = setTimeout(() => {
+      modalRef.current
+        ?.querySelector('select:not([disabled]), input:not([readonly])')
+        ?.focus();
+    }, 30);
+
+    const surTouche = (e) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        closeRef.current?.();
+        return;
+      }
+
+      if (e.key !== 'Tab') return;
+
+      const items = focusables();
+      if (!items.length) return;
+
+      const premier = items[0];
+      const dernier = items[items.length - 1];
+
+      if (e.shiftKey && document.activeElement === premier) {
+        e.preventDefault();
+        dernier.focus();
+      } else if (!e.shiftKey && document.activeElement === dernier) {
+        e.preventDefault();
+        premier.focus();
+      }
+    };
+
+    document.addEventListener('keydown', surTouche);
+
+    return () => {
+      clearTimeout(focusInitial);
+      document.removeEventListener('keydown', surTouche);
+      document.body.style.overflow = overflowAvant;
+      precedent?.focus?.();
+    };
+  }, [modalOpen]);
+
+  /* =========================================================
      CHARGEMENT
   ========================================================== */
-
   if (!currentUser) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-100">
-        <div className="rounded-xl bg-white px-6 py-5 text-sm text-slate-500 shadow-sm">
-          Chargement...
+      <AdminShell intensite="calme">
+        <div className="flex min-h-screen items-center justify-center">
+          <div className="jr-verre rounded-lg border border-jr-bordure px-6 py-5 text-sm text-jr-doux shadow-sm">
+            Chargement...
+          </div>
         </div>
-      </div>
+      </AdminShell>
     );
   }
 
   /* =========================================================
+     VALEURS DE RENDU
+  ========================================================== */
+  const peutEcrire = ['ADMINISTRATEUR', 'AGENT'].includes(currentUser.role);
+  const premierChargement = loading && releves.length === 0;
+  const aucunResultat = !loading && filteredReleves.length === 0;
+  const listeVide = releves.length === 0;
+
+  const stCompteur = selectedCompteur
+    ? styleType(selectedCompteur.type)
+    : null;
+
+  const apercuConso =
+    consumptionPreview === null ||
+    consumptionPreview === undefined ||
+    consumptionPreview === '' ||
+    Number.isNaN(Number(consumptionPreview))
+      ? null
+      : Number(consumptionPreview);
+
+  const nouvelIndexInvalide =
+    form.nouvel_index !== '' &&
+    effectiveAncienIndex !== '' &&
+    Number(form.nouvel_index) < Number(effectiveAncienIndex);
+
+  const etatNouvelIndex = nouvelIndexInvalide
+    ? 'jr-field--err'
+    : apercuConso !== null
+    ? 'jr-field--ok'
+    : '';
+
+  const partEau = pourcent(indicateurs.eau.n, indicateurs.total);
+  const partElec = indicateurs.total ? 100 - partEau : 0;
+
+  const actionsDe = (releve, props = {}) => (
+    <ActionsReleve
+      releve={releve}
+      peutModifier={peutEcrire}
+      peutSupprimer={
+        currentUser.role === 'ADMINISTRATEUR' && isDernierReleve(releve)
+      }
+      onPdf={generateRelevePDF}
+      onEdit={openEditModal}
+      onDelete={handleDelete}
+      {...props}
+    />
+  );
+
+  /* =========================================================
      RENDER
   ========================================================== */
-
   return (
-    <div className="min-h-screen bg-slate-100">
+    <AdminShell
+      intensite="calme"
+      className="selection:bg-[var(--jr-elec)] selection:text-[var(--jr-sur-elec)]"
+    >
       <Sidebar
-        isOpen={
-          sidebarOpen
-        }
-        onClose={() =>
-          setSidebarOpen(
-            false
-          )
-        }
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
         activePath="/dashboard/admin/releves"
-        onNavigate={
-          navigate
-        }
-        onLogout={
-          handleLogout
-        }
-        user={
-          currentUser
-        }
+        onNavigate={navigate}
+        onLogout={handleLogout}
+        user={currentUser}
       />
 
       <div className="lg:pl-72">
         <Header
-          onOpenSidebar={() =>
-            setSidebarOpen(
-              true
-            )
-          }
-          onProfile={() =>
-            navigate(
-              '/dashboard/admin'
-            )
-          }
-          user={
-            currentUser
-          }
+          onOpenSidebar={() => setSidebarOpen(true)}
+          onProfile={() => navigate('/dashboard/admin')}
+          user={currentUser}
         />
 
         <main className="p-4 sm:p-6 lg:p-8">
           {/* =================================================
               TITRE
           ================================================= */}
-
-          <div className="mb-7 flex flex-col justify-between gap-4 md:flex-row md:items-end">
+          <div className="jr-entree mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end">
             <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-blue-600">
-                Suivi des consommations
-              </p>
-
-              <h1 className="mt-1 text-2xl font-bold text-slate-900">
-                Gestion des relevés
+              <h1 className="text-3xl font-semibold tracking-tight text-jr-titre sm:text-4xl">
+                Relevés
               </h1>
 
-              <p className="mt-1 text-sm text-slate-500">
-                Enregistrer, contrôler et consulter les relevés.
+              <p className="mt-1.5 max-w-xl text-sm text-jr-doux">
+                Les index relevés sur chaque compteur. La période et la
+                consommation sont calculées à partir du relevé précédent.
               </p>
             </div>
 
-            {[
-              'ADMINISTRATEUR',
-              'AGENT',
-            ].includes(
-              currentUser.role
-            ) && (
+            {peutEcrire && (
               <button
                 type="button"
-                onClick={
-                  openCreateModal
-                }
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+                onClick={openCreateModal}
+                className="jr-btn jr-btn-elec inline-flex items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-semibold shadow-sm"
               >
-                <Plus size={18} />
-
+                <Plus size={18} aria-hidden="true" />
                 Nouveau relevé
               </button>
             )}
           </div>
 
           {/* =================================================
-              MESSAGES
+              INDICATEURS
           ================================================= */}
+          <section
+            aria-label="Synthèse des relevés"
+            className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-[1.35fr_1fr_1fr]"
+          >
+            <div className="jr-verre rounded-lg border border-jr-bordure p-5 shadow-sm">
+              <p className="text-sm text-jr-doux">Relevés enregistrés</p>
 
-          {error && (
-            <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
-              {error}
-            </div>
-          )}
+              <p className="mt-1 text-4xl font-semibold tabular-nums tracking-tight text-jr-texte">
+                {formatNombre(indicateurs.total)}
+              </p>
 
-          {success && (
-            <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
-              {success}
+              <div
+                aria-hidden="true"
+                className="mt-4 flex h-1.5 overflow-hidden rounded-full"
+                style={{ backgroundColor: 'var(--jr-desactive-fond)' }}
+              >
+                <span
+                  className="h-full transition-[width] duration-500 motion-reduce:transition-none"
+                  style={{
+                    width: `${partEau}%`,
+                    backgroundColor: 'var(--jr-eau-clair)',
+                  }}
+                />
+                <span
+                  className="h-full transition-[width] duration-500 motion-reduce:transition-none"
+                  style={{
+                    width: `${partElec}%`,
+                    backgroundColor: 'var(--jr-elec)',
+                  }}
+                />
+              </div>
             </div>
-          )}
+
+            <div className="jr-carte-eau rounded-lg p-5 shadow-sm">
+              <p className="text-sm text-jr-doux">Eau</p>
+
+              <p className="mt-1 text-3xl font-semibold tabular-nums tracking-tight text-jr-texte">
+                {formatConso(indicateurs.eau.conso)}{' '}
+                <span className="text-base font-medium text-jr-lien">m³</span>
+              </p>
+
+              <p className="mt-2 text-xs text-jr-lien">
+                {formatNombre(indicateurs.eau.n)} relevé
+                {indicateurs.eau.n > 1 ? 's' : ''}
+              </p>
+            </div>
+
+            <div className="jr-carte-elec rounded-lg p-5 shadow-sm">
+              <p className="text-sm text-jr-doux">Électricité</p>
+
+              <p className="mt-1 text-3xl font-semibold tabular-nums tracking-tight text-jr-texte">
+                {formatConso(indicateurs.elec.conso)}{' '}
+                <span
+                  className="text-base font-medium"
+                  style={{ color: 'var(--jr-attention)' }}
+                >
+                  kWh
+                </span>
+              </p>
+
+              <p className="mt-2 text-xs" style={{ color: 'var(--jr-attention)' }}>
+                {formatNombre(indicateurs.elec.n)} relevé
+                {indicateurs.elec.n > 1 ? 's' : ''}
+              </p>
+            </div>
+          </section>
 
           {/* =================================================
               FILTRES
           ================================================= */}
+          <section className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center">
+            <div className="relative flex-1">
+              <Search
+                size={18}
+                aria-hidden="true"
+                className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-jr-faible"
+              />
 
-          <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <div className="relative">
-                <Search
-                  size={18}
-                  className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"
-                />
+              <input
+                ref={searchRef}
+                type="text"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Rechercher par compteur, abonné ou numéro"
+                aria-label="Rechercher un relevé"
+                className="jr-field w-full rounded-md border py-2.5 pl-10 pr-10 text-sm"
+              />
 
-                <input
-                  type="text"
-                  value={
-                    search
-                  }
-                  onChange={(
-                    event
-                  ) =>
-                    setSearch(
-                      event.target
-                        .value
-                    )
-                  }
-                  placeholder="Rechercher compteur, abonné..."
-                  className="w-full rounded-xl border border-slate-300 bg-slate-50 py-3 pl-10 pr-4 text-sm outline-none focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                />
-              </div>
-
-              <select
-                value={
-                  typeFilter
-                }
-                onChange={(
-                  event
-                ) =>
-                  setTypeFilter(
-                    event.target
-                      .value
-                  )
-                }
-                className="rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+              <kbd
+                aria-hidden="true"
+                className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded border border-jr-bordure-forte px-1.5 text-xs text-jr-faible sm:block"
               >
-                <option value="">
-                  Tous les types
-                </option>
+                /
+              </kbd>
+            </div>
 
-                <option value="ELECTRICITE">
-                  Électricité
-                </option>
+            <div
+              role="group"
+              aria-label="Filtrer par type de compteur"
+              className="jr-verre inline-flex self-start rounded-md border border-jr-bordure p-0.5"
+            >
+              {FILTRES_TYPE.map((filtre) => {
+                const actif = typeFilter === filtre.valeur;
 
-                <option value="EAU">
-                  Eau
-                </option>
-              </select>
+                const styleActif =
+                  filtre.valeur === 'ELECTRICITE'
+                    ? {
+                        backgroundColor: 'var(--jr-elec)',
+                        color: 'var(--jr-sur-elec)',
+                      }
+                    : {
+                        backgroundColor: 'var(--jr-eau)',
+                        color: '#ffffff',
+                      };
+
+                return (
+                  <button
+                    key={filtre.valeur || 'tous'}
+                    type="button"
+                    aria-pressed={actif}
+                    onClick={() => setTypeFilter(filtre.valeur)}
+                    className="inline-flex items-center gap-2 rounded px-3.5 py-2 text-sm font-medium transition-colors motion-reduce:transition-none"
+                    style={
+                      actif
+                        ? styleActif
+                        : { color: 'var(--jr-texte-doux)' }
+                    }
+                  >
+                    {filtre.libelle}
+                    <span
+                      className="text-xs tabular-nums"
+                      style={{ opacity: actif ? 0.85 : 0.7 }}
+                    >
+                      {formatNombre(compteursType[filtre.valeur])}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </section>
 
           {/* =================================================
               TABLEAU
           ================================================= */}
-
-          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+          <section className="jr-verre overflow-hidden rounded-lg border border-jr-bordure shadow-sm">
+            <div className="flex items-center justify-between border-b border-jr-bordure px-5 py-3.5 sm:px-6">
               <div>
-                <h2 className="flex items-center gap-2 font-bold text-slate-900">
-                  <ClipboardList
-                    size={19}
-                    className="text-blue-600"
-                  />
-
+                <h2 className="font-semibold text-jr-titre">
                   Historique des relevés
                 </h2>
 
-                <p className="mt-1 text-xs text-slate-500">
-                  {
-                    filteredReleves.length
-                  }{' '}
-                  relevé(s)
+                <p className="mt-0.5 text-xs text-jr-faible">
+                  {formatNombre(filteredReleves.length)} affiché
+                  {filteredReleves.length > 1 ? 's' : ''} sur{' '}
+                  {formatNombre(releves.length)}
                 </p>
               </div>
 
@@ -3445,471 +2652,380 @@ function RelevesPage() {
                   loadReleves();
                   loadCompteurs();
                 }}
-                className="rounded-xl p-2.5 text-slate-500 hover:bg-slate-100 hover:text-blue-600"
-                title="Actualiser"
+                className="rounded-md p-2.5 text-jr-faible transition-colors hover:bg-[var(--jr-eau-pale)] hover:text-jr-lien motion-reduce:transition-none"
+                title="Actualiser la liste"
+                aria-label="Actualiser la liste"
               >
                 <RefreshCw
                   size={18}
+                  aria-hidden="true"
                   className={
-                    loading
-                      ? 'animate-spin'
-                      : ''
+                    loading ? 'animate-spin motion-reduce:animate-none' : ''
                   }
                 />
               </button>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="min-w-[1450px] w-full">
-                <thead className="bg-slate-50">
-                  <tr>
-                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
-                      Compteur
-                    </th>
+            {premierChargement && <Squelette />}
 
-                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
-                      Abonné
-                    </th>
+            {!premierChargement && aucunResultat && (
+              <EtatVide
+                listeVide={listeVide}
+                peutAjouter={peutEcrire}
+                onAjouter={openCreateModal}
+                onReset={reinitialiserFiltres}
+              />
+            )}
 
-                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
-                      Installation
-                    </th>
+            {/* Écrans moyens et grands : tableau à 6 colonnes */}
+            {!premierChargement && !aucunResultat && (
+              <div className="hidden md:block">
+                <table className="w-full text-left">
+                  <caption className="sr-only">Historique des relevés</caption>
 
-                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
-                      Relevé précédent
-                    </th>
-
-                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
-                      Relevé actuel
-                    </th>
-
-                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
-                      Ancien index
-                    </th>
-
-                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
-                      Nouvel index
-                    </th>
-
-                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
-                      Consommation
-                    </th>
-
-                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
-                      Période
-                    </th>
-
-                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
-                      Saisi par
-                    </th>
-
-                    <th className="px-5 py-4 text-right text-xs font-bold uppercase tracking-wide text-slate-500">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-
-                <tbody className="divide-y divide-slate-100">
-                  {loading ? (
-                    <tr>
-                      <td
-                        colSpan="11"
-                        className="px-5 py-14 text-center text-sm text-slate-500"
-                      >
-                        Chargement...
-                      </td>
+                  <thead>
+                    <tr className="border-b border-jr-bordure">
+                      <th scope="col" className="px-5 py-3 text-xs font-medium text-jr-faible">
+                        Compteur
+                      </th>
+                      <th scope="col" className="px-5 py-3 text-xs font-medium text-jr-faible">
+                        Abonné
+                      </th>
+                      <th scope="col" className="px-5 py-3 text-xs font-medium text-jr-faible">
+                        Période
+                      </th>
+                      <th scope="col" className="px-5 py-3 text-xs font-medium text-jr-faible">
+                        Index
+                      </th>
+                      <th scope="col" className="px-5 py-3 text-xs font-medium text-jr-faible">
+                        Consommation
+                      </th>
+                      <th scope="col" className="px-5 py-3 text-xs font-medium text-jr-faible">
+                        Saisi par
+                        <span className="sr-only"> et actions</span>
+                      </th>
                     </tr>
-                  ) : filteredReleves.length ===
-                    0 ? (
-                    <tr>
-                      <td
-                        colSpan="11"
-                        className="px-5 py-14 text-center text-sm text-slate-500"
-                      >
-                        Aucun relevé trouvé.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredReleves.map(
-                      (
-                        releve
-                      ) => (
+                  </thead>
+
+                  <tbody className="divide-y divide-jr-bordure">
+                    {filteredReleves.map((releve, index) => {
+                      const st = styleType(releve.type_compteur);
+                      const unite = releve.unite || st.unite;
+
+                      return (
                         <tr
-                          key={
-                            releve.id
-                          }
-                          className="hover:bg-slate-50"
+                          key={releve.id}
+                          className="jr-entree group transition-colors hover:bg-[var(--jr-eau-pale)] focus-within:bg-[var(--jr-eau-pale)] motion-reduce:transition-none"
+                          style={{ animationDelay: `${Math.min(index, 12) * 30}ms` }}
                         >
                           {/* COMPTEUR */}
+                          <td className="relative px-5 py-3.5">
+                            <span
+                              aria-hidden="true"
+                              className="absolute inset-y-0 left-0 w-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 motion-reduce:transition-none"
+                              style={{ backgroundColor: 'var(--jr-elec)' }}
+                            />
 
-                          <td className="px-5 py-4">
                             <div className="flex items-center gap-3">
-                              <div
-                                className={`rounded-xl p-2.5 ${
-                                  releve.type_compteur ===
-                                  'EAU'
-                                    ? 'bg-cyan-50'
-                                    : 'bg-amber-50'
-                                }`}
-                              >
-                                {releve.type_compteur ===
-                                'EAU' ? (
-                                  <Droplets
-                                    size={
-                                      18
-                                    }
-                                    className="text-cyan-600"
-                                  />
-                                ) : (
-                                  <Zap
-                                    size={
-                                      18
-                                    }
-                                    className="text-amber-600"
-                                  />
-                                )}
-                              </div>
+                              <PastilleType type={releve.type_compteur} />
 
                               <div>
-                                <p className="font-bold text-slate-800">
-                                  {
-                                    releve.numero_compteur
-                                  }
+                                <p className="font-mono text-sm tabular-nums text-jr-titre">
+                                  {releve.numero_compteur}
                                 </p>
-
-                                <p className="text-xs text-slate-400">
-                                  {releve.type_compteur ===
-                                  'EAU'
-                                    ? 'Eau'
-                                    : 'Électricité'}
+                                <p className="text-xs text-jr-faible">
+                                  {st.libelle},{' '}
+                                  {releve.date_installation
+                                    ? `installé le ${formatDate(releve.date_installation)}`
+                                    : 'installation non renseignée'}
                                 </p>
                               </div>
                             </div>
                           </td>
 
                           {/* ABONNÉ */}
-
-                          <td className="px-5 py-4">
-                            <div className="flex items-center gap-2">
-                              <UserRound
-                                size={
-                                  15
-                                }
-                                className="text-slate-400"
-                              />
+                          <td className="px-5 py-3.5">
+                            <div className="flex items-center gap-3">
+                              <Initiales releve={releve} />
 
                               <div>
-                                <p className="text-sm font-semibold text-slate-700">
-                                  {releve.abonne_prenom
-                                    ? `${releve.abonne_prenom} ${
-                                        releve.abonne_nom ||
-                                        ''
-                                      }`
-                                    : releve.abonne_nom ||
-                                      '—'}
+                                <p className="text-sm font-medium text-jr-texte">
+                                  {nomAbonneDe(releve)}
                                 </p>
-
-                                <p className="text-xs text-slate-400">
-                                  {
-                                    releve.numero_abonne
-                                  }
+                                <p className="font-mono text-xs tabular-nums text-jr-faible">
+                                  {releve.numero_abonne}
                                 </p>
                               </div>
                             </div>
-                          </td>
-
-                          {/* INSTALLATION */}
-
-                          <td className="px-5 py-4">
-                            <p className="text-sm font-semibold text-slate-700">
-                              {releve.date_installation
-                                ? formatDate(
-                                    releve.date_installation
-                                  )
-                                : 'Non renseignée'}
-                            </p>
-                          </td>
-
-                          {/* PRÉCÉDENT */}
-
-                          <td className="px-5 py-4">
-                            {releve.date_ancien_releve ? (
-                              <div>
-                                <p className="text-sm font-semibold text-slate-700">
-                                  {formatDate(
-                                    releve.date_ancien_releve
-                                  )}
-                                </p>
-
-                                <p className="mt-1 text-xs text-slate-400">
-                                  Date précédente
-                                </p>
-                              </div>
-                            ) : (
-                              <div>
-                                <p className="text-sm font-medium text-slate-400">
-                                  Aucun
-                                </p>
-
-                                <p className="mt-1 text-xs text-slate-400">
-                                  Date non renseignée
-                                </p>
-                              </div>
-                            )}
-                          </td>
-
-                          {/* ACTUEL */}
-
-                          <td className="px-5 py-4">
-                            <p className="text-sm font-semibold text-blue-700">
-                              {formatDate(
-                                releve.date_releve
-                              )}
-                            </p>
-                          </td>
-
-                          {/* ANCIEN INDEX */}
-
-                          <td className="px-5 py-4 text-sm font-semibold text-slate-700">
-                            {Number(
-                              releve.ancien_index
-                            ).toLocaleString(
-                              'fr-FR'
-                            )}
-                          </td>
-
-                          {/* NOUVEL INDEX */}
-
-                          <td className="px-5 py-4 text-sm font-semibold text-blue-700">
-                            {Number(
-                              releve.nouvel_index
-                            ).toLocaleString(
-                              'fr-FR'
-                            )}
-                          </td>
-
-                          {/* CONSOMMATION */}
-
-                          <td className="px-5 py-4">
-                            <span className="font-bold text-slate-800">
-                              {Number(
-                                releve.consommation
-                              ).toLocaleString(
-                                'fr-FR',
-                                {
-                                  minimumFractionDigits:
-                                    2,
-                                  maximumFractionDigits:
-                                    2,
-                                }
-                              )}{' '}
-                              {releve.unite ||
-                                (releve.type_compteur ===
-                                'EAU'
-                                  ? 'm³'
-                                  : 'kWh')}
-                            </span>
                           </td>
 
                           {/* PÉRIODE */}
+                          <td className="px-5 py-3.5">
+                            <p className="text-sm tabular-nums text-jr-texte">
+                              {releve.date_ancien_releve
+                                ? `${formatDate(releve.date_ancien_releve)} → ${formatDate(releve.date_releve)}`
+                                : formatDate(releve.date_releve)}
+                            </p>
 
-                          <td className="px-5 py-4">
-                            {releve.nombre_jours !==
-                              null &&
-                            releve.nombre_jours !==
-                              undefined ? (
-                              <>
-                                <p className="text-sm font-bold text-blue-700">
-                                  {
-                                    releve.nombre_jours
-                                  }{' '}
-                                  {Number(
-                                    releve.nombre_jours
-                                  ) ===
-                                  1
+                            <p className="mt-0.5 flex gap-2 text-xs text-jr-faible">
+                              {!releve.date_ancien_releve && (
+                                <span>Premier relevé</span>
+                              )}
+                              {releve.nombre_jours !== null &&
+                              releve.nombre_jours !== undefined ? (
+                                <span className="tabular-nums">
+                                  {releve.nombre_jours}{' '}
+                                  {Number(releve.nombre_jours) === 1
                                     ? 'jour'
                                     : 'jours'}
-                                </p>
-
-                                <p className="mt-1 text-xs text-slate-400">
-                                  {releve.date_ancien_releve
-                                    ? 'Depuis la date précédente'
-                                    : 'Période non renseignée'}
-                                </p>
-                              </>
-                            ) : (
-                              <p className="text-sm text-slate-400">
-                                Non disponible
-                              </p>
-                            )}
-                          </td>
-
-                          {/* AUTEUR */}
-
-                          <td className="px-5 py-4 text-sm text-slate-600">
-                            {releve.saisie_par ||
-                              '—'}
-                          </td>
-
-                          {/* ACTIONS */}
-
-                          <td className="px-5 py-4">
-                            <div className="flex justify-end gap-2">
-                              {/* PDF */}
-
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  generateRelevePDF(
-                                    releve
-                                  )
-                                }
-                                className="rounded-lg p-2 text-slate-500 hover:bg-emerald-50 hover:text-emerald-600"
-                                title="Générer le PDF"
-                              >
-                                <FileText
-                                  size={
-                                    17
-                                  }
-                                />
-                              </button>
-
-                              {/* MODIFIER */}
-
-                              {[
-                                'ADMINISTRATEUR',
-                                'AGENT',
-                              ].includes(
-                                currentUser.role
-                              ) && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    openEditModal(
-                                      releve
-                                    )
-                                  }
-                                  className="rounded-lg p-2 text-slate-500 hover:bg-blue-50 hover:text-blue-600"
-                                  title="Modifier"
-                                >
-                                  <Pencil
-                                    size={
-                                      17
-                                    }
-                                  />
-                                </button>
+                                </span>
+                              ) : (
+                                <span>Durée non disponible</span>
                               )}
+                            </p>
+                          </td>
 
-                              {/* SUPPRIMER */}
+                          {/* INDEX */}
+                          <td className="px-5 py-3.5 text-sm tabular-nums">
+                            <span className="text-jr-doux">
+                              {Number(releve.ancien_index).toLocaleString('fr-FR')}
+                            </span>{' '}
+                            <span aria-hidden="true" className="text-jr-faible">
+                              →
+                            </span>
+                            <span className="sr-only"> vers </span>{' '}
+                            <span className="font-medium" style={{ color: st.texte }}>
+                              {Number(releve.nouvel_index).toLocaleString('fr-FR')}
+                            </span>
+                          </td>
 
-                              {currentUser.role ===
-                                'ADMINISTRATEUR' &&
-                                isDernierReleve(
-                                  releve
-                                ) && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      handleDelete(
-                                        releve
-                                      )
-                                    }
-                                    className="rounded-lg p-2 text-slate-500 hover:bg-red-50 hover:text-red-600"
-                                    title="Supprimer le dernier relevé du compteur"
-                                    aria-label={`Supprimer le dernier relevé du compteur ${
-                                      releve.numero_compteur ||
-                                      ''
-                                    }`}
-                                  >
-                                    <Trash2
-                                      size={
-                                        17
-                                      }
-                                    />
-                                  </button>
-                                )}
+                          {/* CONSOMMATION */}
+                          <td className="px-5 py-3.5">
+                            <span
+                              className="text-lg font-semibold tabular-nums"
+                              style={{ color: st.texte }}
+                            >
+                              {formatConso(releve.consommation)}
+                            </span>{' '}
+                            <span className="text-xs text-jr-faible">{unite}</span>
+                          </td>
+
+                          {/* SAISI PAR + ACTIONS */}
+                          <td className="px-5 py-3.5">
+                            <div className="flex items-center justify-between gap-3">
+                              <span
+                                className="max-w-[7rem] truncate text-xs text-jr-faible"
+                                title={releve.saisie_par || undefined}
+                              >
+                                {releve.saisie_par || '—'}
+                              </span>
+
+                              {actionsDe(releve, { auSurvol: true })}
                             </div>
                           </td>
                         </tr>
-                      )
-                    )
-                  )}
-                </tbody>
-              </table>
-            </div>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Mobile : une carte par relevé */}
+            {!premierChargement && !aucunResultat && (
+              <ul className="divide-y divide-jr-bordure md:hidden">
+                {filteredReleves.map((releve, index) => {
+                  const st = styleType(releve.type_compteur);
+                  const unite = releve.unite || st.unite;
+
+                  return (
+                    <li
+                      key={releve.id}
+                      className="jr-entree p-4"
+                      style={{ animationDelay: `${Math.min(index, 8) * 30}ms` }}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <PastilleType type={releve.type_compteur} />
+
+                          <div className="min-w-0">
+                            <p className="font-mono text-sm tabular-nums text-jr-titre">
+                              {releve.numero_compteur}
+                            </p>
+                            <p className="truncate text-xs text-jr-faible">
+                              {nomAbonneDe(releve)}
+                            </p>
+                          </div>
+                        </div>
+
+                        <p className="text-right">
+                          <span
+                            className="text-lg font-semibold tabular-nums"
+                            style={{ color: st.texte }}
+                          >
+                            {formatConso(releve.consommation)}
+                          </span>{' '}
+                          <span className="text-xs text-jr-faible">{unite}</span>
+                        </p>
+                      </div>
+
+                      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                        <div>
+                          <dt className="text-jr-faible">Période</dt>
+                          <dd className="mt-0.5 tabular-nums text-jr-texte">
+                            {releve.date_ancien_releve
+                              ? `${formatDate(releve.date_ancien_releve)} → ${formatDate(releve.date_releve)}`
+                              : `Premier relevé, ${formatDate(releve.date_releve)}`}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-jr-faible">Index</dt>
+                          <dd className="mt-0.5 tabular-nums text-jr-texte">
+                            {Number(releve.ancien_index).toLocaleString('fr-FR')} →{' '}
+                            {Number(releve.nouvel_index).toLocaleString('fr-FR')}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-jr-faible">Saisi par</dt>
+                          <dd className="mt-0.5 text-jr-texte">
+                            {releve.saisie_par || '—'}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-jr-faible">Installation</dt>
+                          <dd className="mt-0.5 text-jr-texte">
+                            {releve.date_installation
+                              ? formatDate(releve.date_installation)
+                              : 'Non renseignée'}
+                          </dd>
+                        </div>
+                      </dl>
+
+                      <div className="mt-3">
+                        {actionsDe(releve, { avecTexte: true })}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </section>
         </main>
       </div>
 
       {/* =================================================
+          TOASTS
+      ================================================= */}
+      <div className="pointer-events-none fixed right-4 top-4 z-[120] flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2">
+        {success && (
+          <div
+            role="status"
+            className="jr-toast jr-verre-fort pointer-events-auto flex items-start gap-3 rounded-md border border-jr-bordure py-3 pl-3 pr-2 shadow-lg"
+            style={{ borderLeft: '4px solid var(--jr-ok)' }}
+          >
+            <p className="flex-1 text-sm font-medium text-jr-texte">{success}</p>
+            <button
+              type="button"
+              onClick={() => setSuccess('')}
+              aria-label="Fermer le message"
+              className="rounded p-1 text-jr-faible hover:text-jr-texte"
+            >
+              <X size={16} aria-hidden="true" />
+            </button>
+          </div>
+        )}
+
+        {error && !modalOpen && (
+          <div
+            role="alert"
+            className="jr-toast jr-verre-fort pointer-events-auto flex items-start gap-3 rounded-md border border-jr-bordure py-3 pl-3 pr-2 shadow-lg"
+            style={{ borderLeft: '4px solid var(--jr-err)' }}
+          >
+            <p className="flex-1 text-sm font-medium text-jr-texte">{error}</p>
+            <button
+              type="button"
+              onClick={() => setError('')}
+              aria-label="Fermer le message"
+              className="rounded p-1 text-jr-faible hover:text-jr-texte"
+            >
+              <X size={16} aria-hidden="true" />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* =================================================
           MODAL
       ================================================= */}
-
       {modalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="max-h-[95vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-sm"
+          style={{
+            backgroundColor:
+              'color-mix(in srgb, var(--jr-fond) 70%, transparent)',
+          }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeModal();
+          }}
+        >
+          <div
+            ref={modalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="titre-modale-releve"
+            className="jr-verre-fort jr-pop max-h-[95vh] w-full max-w-4xl overflow-y-auto rounded-lg border border-jr-bordure shadow-2xl"
+          >
             {/* HEADER */}
-
-            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+            <div className="flex items-start justify-between gap-4 border-b border-jr-bordure px-6 py-5">
               <div>
-                <h2 className="text-xl font-bold text-slate-900">
+                <h2
+                  id="titre-modale-releve"
+                  className="text-xl font-semibold text-jr-titre"
+                >
                   {editingReleve
                     ? 'Modifier un relevé'
                     : 'Enregistrer un relevé'}
                 </h2>
 
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="mt-1 text-sm text-jr-doux">
                   La période et la consommation sont calculées automatiquement.
                 </p>
               </div>
 
               <button
                 type="button"
-                onClick={
-                  closeModal
-                }
-                className="rounded-xl p-2 text-slate-500 hover:bg-slate-100"
+                onClick={closeModal}
                 title="Fermer"
+                aria-label="Fermer"
+                className="rounded-md p-2 text-jr-faible transition-colors hover:bg-[var(--jr-eau-pale)] hover:text-jr-texte motion-reduce:transition-none"
               >
-                <X
-                  size={
-                    20
-                  }
-                />
+                <X size={20} aria-hidden="true" />
               </button>
             </div>
 
             {/* FORM */}
+            <form onSubmit={handleSubmit} className="space-y-6 p-6">
+              {/* ---------- Compteur ---------- */}
+              <fieldset className="space-y-4">
+                <legend className="mb-3 text-sm font-semibold text-jr-titre">
+                  Compteur
+                </legend>
 
-            <form
-              onSubmit={
-                handleSubmit
-              }
-              className="space-y-5 p-6"
-            >
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                {/* COMPTEUR */}
-
-                <div className="md:col-span-2">
-                  <label className="mb-2 block text-sm font-semibold text-slate-700">
-                    Compteur
+                <div>
+                  <label
+                    htmlFor="champ-compteur"
+                    className="mb-1.5 block text-sm font-medium text-jr-doux"
+                  >
+                    Compteur concerné
                   </label>
 
                   <select
-                    value={
-                      form.compteur_id
-                    }
-                    onChange={
-                      handleCompteurChange
-                    }
-                    disabled={
-                      loadingCompteurs ||
-                      Boolean(
-                        editingReleve
-                      )
-                    }
+                    id="champ-compteur"
+                    value={form.compteur_id}
+                    onChange={handleCompteurChange}
+                    disabled={loadingCompteurs || Boolean(editingReleve)}
                     required
-                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-100"
+                    className="jr-field w-full rounded-md border px-3 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-70"
                   >
                     <option value="">
                       {loadingCompteurs
@@ -3918,602 +3034,409 @@ function RelevesPage() {
                     </option>
 
                     {compteurs
-                      .filter(
-                        (
-                          compteur
-                        ) =>
-                          compteur.statut !==
-                          'INACTIF'
-                      )
-                      .map(
-                        (
-                          compteur
-                        ) => (
-                          <option
-                            key={
-                              compteur.id
-                            }
-                            value={
-                              compteur.id
-                            }
-                          >
-                            {
-                              compteur.numero_compteur
-                            }
-                            {' — '}
-                            {compteur.type ===
-                            'EAU'
-                              ? 'Eau'
-                              : 'Électricité'}
-                            {' — '}
-                            {
-                              compteur.numero_abonne
-                            }
-                          </option>
-                        )
-                      )}
+                      .filter((compteur) => compteur.statut !== 'INACTIF')
+                      .map((compteur) => (
+                        <option key={compteur.id} value={compteur.id}>
+                          {compteur.numero_compteur}
+                          {' — '}
+                          {compteur.type === 'EAU' ? 'Eau' : 'Électricité'}
+                          {' — '}
+                          {compteur.numero_abonne}
+                        </option>
+                      ))}
                   </select>
                 </div>
 
-                {/* INFO COMPTEUR */}
-
                 {selectedCompteur && (
-                  <div className="md:col-span-2 rounded-xl bg-slate-50 p-4">
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                      <div>
-                        <p className="text-xs text-slate-400">
-                          Abonné
-                        </p>
+                  <div
+                    className="grid grid-cols-1 gap-4 rounded-md border border-jr-bordure p-4 sm:grid-cols-3"
+                    style={{ backgroundColor: stCompteur.fond }}
+                  >
+                    <div>
+                      <p className="text-xs text-jr-faible">Abonné</p>
+                      <p className="mt-1 text-sm font-medium text-jr-texte">
+                        {selectedCompteur.abonne_prenom
+                          ? `${selectedCompteur.abonne_prenom} ${
+                              selectedCompteur.abonne_nom || ''
+                            }`
+                          : selectedCompteur.abonne_nom ||
+                            selectedCompteur.numero_abonne ||
+                            '—'}
+                      </p>
+                    </div>
 
-                        <p className="mt-1 text-sm font-semibold text-slate-800">
-                          {selectedCompteur.abonne_prenom
-                            ? `${selectedCompteur.abonne_prenom} ${
-                                selectedCompteur.abonne_nom ||
-                                ''
-                              }`
-                            : selectedCompteur.abonne_nom ||
-                              selectedCompteur.numero_abonne ||
-                              '—'}
-                        </p>
-                      </div>
+                    <div>
+                      <p className="text-xs text-jr-faible">Type</p>
+                      <p
+                        className="mt-1 text-sm font-medium"
+                        style={{ color: stCompteur.texte }}
+                      >
+                        {selectedCompteur.type === 'EAU'
+                          ? 'Eau (m³)'
+                          : 'Électricité (kWh)'}
+                      </p>
+                    </div>
 
-                      <div>
-                        <p className="text-xs text-slate-400">
-                          Type
-                        </p>
-
-                        <p className="mt-1 text-sm font-semibold text-slate-800">
-                          {selectedCompteur.type ===
-                          'EAU'
-                            ? 'Eau (m³)'
-                            : 'Électricité (kWh)'}
-                        </p>
-                      </div>
-
-                      <div>
-                        <p className="text-xs text-slate-400">
-                          N° compteur
-                        </p>
-
-                        <p className="mt-1 text-sm font-semibold text-slate-800">
-                          {
-                            selectedCompteur.numero_compteur
-                          }
-                        </p>
-                      </div>
+                    <div>
+                      <p className="text-xs text-jr-faible">N° compteur</p>
+                      <p className="mt-1 font-mono text-sm tabular-nums text-jr-texte">
+                        {selectedCompteur.numero_compteur}
+                      </p>
                     </div>
                   </div>
                 )}
+              </fieldset>
 
-                {/* DATE INSTALLATION */}
+              {/* ---------- Période ---------- */}
+              <fieldset className="border-t border-jr-bordure pt-5">
+                <legend className="mb-3 px-0 text-sm font-semibold text-jr-titre">
+                  Période
+                </legend>
 
-                <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-700">
-                    Date d'installation
-                  </label>
-
-                  <div className="relative">
-                    <CalendarDays
-                      size={
-                        17
-                      }
-                      className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                    />
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <div>
+                    <label
+                      htmlFor="champ-installation"
+                      className="mb-1.5 block text-sm font-medium text-jr-doux"
+                    >
+                      Date d'installation
+                    </label>
 
                     <input
+                      id="champ-installation"
                       type="date"
-                      value={
-                        dateInstallation
-                      }
+                      value={dateInstallation}
                       readOnly
-                      className="w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 pl-10 text-sm text-slate-600 outline-none"
+                      tabIndex={-1}
+                      className="jr-field w-full cursor-default rounded-md border px-3 py-2.5 text-sm text-jr-doux"
                     />
                   </div>
-                </div>
 
-                {/* DATE PRÉCÉDENTE */}
-
-                <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-700">
-                    Date du relevé précédent
-                  </label>
-
-                  <div className="relative">
-                    <CalendarDays
-                      size={
-                        17
-                      }
-                      className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                    />
+                  <div>
+                    <label
+                      htmlFor="champ-date-precedente"
+                      className="mb-1.5 block text-sm font-medium text-jr-doux"
+                    >
+                      Date du relevé précédent
+                    </label>
 
                     <input
+                      id="champ-date-precedente"
                       type="date"
                       name="date_ancien_releve"
-                      value={
-                        effectiveDateAncienReleve
-                      }
-                      onChange={
-                        handleChange
-                      }
-                      readOnly={
-                        !isFirstReleve
-                      }
-                      min={
-                        dateInstallation ||
-                        undefined
-                      }
-                      max={
-                        form.date_releve ||
-                        undefined
-                      }
-                      className={`w-full rounded-xl border px-4 py-3 pl-10 text-sm outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100 ${
-                        isFirstReleve
-                          ? 'border-blue-300 bg-white text-slate-800'
-                          : 'border-slate-300 bg-slate-50 text-slate-600'
+                      value={effectiveDateAncienReleve}
+                      onChange={handleChange}
+                      readOnly={!isFirstReleve}
+                      min={dateInstallation || undefined}
+                      max={form.date_releve || undefined}
+                      className={`jr-field w-full rounded-md border px-3 py-2.5 text-sm ${
+                        isFirstReleve ? '' : 'cursor-default text-jr-doux'
                       }`}
                     />
+
+                    {isFirstReleve ? (
+                      <p className="mt-1 text-xs font-medium text-jr-lien">
+                        Premier relevé : saisissez la date indiquée sur le
+                        relevé ou le document précédent.
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-xs text-jr-faible">
+                        Récupérée depuis le relevé précédent.
+                      </p>
+                    )}
                   </div>
 
-                  {isFirstReleve ? (
-                    <p className="mt-1 text-xs font-medium text-blue-600">
-                      Premier relevé : saisissez la date indiquée sur le relevé/document précédent.
-                    </p>
-                  ) : (
-                    <p className="mt-1 text-xs text-slate-400">
-                      Date récupérée automatiquement depuis le relevé précédent.
-                    </p>
-                  )}
-                </div>
-
-                {/* DATE ACTUELLE */}
-
-                <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-700">
-                    Date du relevé actuel
-                  </label>
-
-                  <div className="relative">
-                    <CalendarDays
-                      size={
-                        17
-                      }
-                      className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                    />
+                  <div>
+                    <label
+                      htmlFor="champ-date-actuelle"
+                      className="mb-1.5 block text-sm font-medium text-jr-doux"
+                    >
+                      Date du relevé actuel
+                    </label>
 
                     <input
+                      id="champ-date-actuelle"
                       type="date"
                       name="date_releve"
-                      value={
-                        form.date_releve
-                      }
-                      onChange={
-                        handleChange
-                      }
-                      min={
-                        dateInstallation ||
-                        undefined
-                      }
+                      value={form.date_releve}
+                      onChange={handleChange}
+                      min={dateInstallation || undefined}
                       required
-                      className="w-full rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 pl-10 text-sm font-semibold text-blue-700 outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
-                    />
-                  </div>
-
-                  <p className="mt-1 text-xs text-slate-400">
-                    Le relevé précédent sera recherché automatiquement selon cette date.
-                  </p>
-                </div>
-
-                {/* NOMBRE JOURS */}
-
-                <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-700">
-                    Nombre de jours
-                  </label>
-
-                  <div className="relative">
-                    <input
-                      type="number"
-                      value={
-                        nombreJours ??
-                        ''
-                      }
-                      readOnly
-                      placeholder="Calcul automatique"
-                      className="w-full rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 pr-16 text-sm font-bold text-blue-700 outline-none"
+                      className="jr-field w-full rounded-md border px-3 py-2.5 text-sm font-medium"
                     />
 
-                    <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm font-semibold text-blue-600">
-                      {nombreJours ===
-                      1
-                        ? 'jour'
-                        : 'jours'}
-                    </span>
-                  </div>
-
-                  <p className="mt-1 text-xs text-slate-400">
-                    Calculé automatiquement entre la date précédente et la date actuelle.
-                  </p>
-                </div>
-
-                {/* ANCIEN INDEX */}
-
-                <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-700">
-                    Ancien index
-                  </label>
-
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    name="ancien_index"
-                    value={
-                      effectiveAncienIndex ===
-                      ''
-                        ? ''
-                        : effectiveAncienIndex
-                    }
-                    onChange={
-                      handleChange
-                    }
-                    readOnly={
-                      !isFirstReleve
-                    }
-                    required
-                    className={`w-full rounded-xl border px-4 py-3 text-sm outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100 ${
-                      isFirstReleve
-                        ? 'border-slate-300 bg-white'
-                        : 'border-slate-300 bg-slate-50 text-slate-600'
-                    }`}
-                  />
-
-                  {isFirstReleve ? (
-                    <p className="mt-1 text-xs text-blue-600">
-                      Premier relevé : saisissez l’ancien index.
+                    <p className="mt-1 text-xs text-jr-faible">
+                      Le relevé précédent est recherché selon cette date.
                     </p>
-                  ) : (
-                    <p className="mt-1 text-xs text-slate-400">
-                      Repris automatiquement du nouvel index du relevé précédent.
-                    </p>
-                  )}
-                </div>
-
-                {/* NOUVEL INDEX */}
-
-                <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-700">
-                    Nouvel index
-                  </label>
-
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    name="nouvel_index"
-                    value={
-                      form.nouvel_index
-                    }
-                    onChange={
-                      handleChange
-                    }
-                    required
-                    className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
-                  />
-                </div>
-
-                {/* CONSOMMATION */}
-
-                <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-700">
-                    Consommation calculée
-                  </label>
-
-                  <div className="relative">
-                    <input
-                      type="number"
-                      value={
-                        consumptionPreview ??
-                        ''
-                      }
-                      readOnly
-                      className="w-full rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 pr-20 text-sm font-bold text-emerald-700 outline-none"
-                    />
-
-                    <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm font-semibold text-emerald-600">
-                      {selectedCompteur?.type ===
-                      'EAU'
-                        ? 'm³'
-                        : 'kWh'}
-                    </span>
                   </div>
-
-                  <p className="mt-1 text-xs text-slate-400">
-                    Nouvel index − Ancien index
-                  </p>
                 </div>
-
-                {/* FACTURATION TEMPORAIRE */}
 
                 {selectedCompteur && (
-                  <div className="md:col-span-2 rounded-xl border border-amber-200 bg-amber-50 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <h3 className="text-sm font-bold text-amber-900">
-                          Paramètres tarifaires — temporaire
-                        </h3>
-
-                        <p className="mt-1 text-xs text-amber-700">
-                          Ces valeurs servent uniquement à l'affichage et doivent être validées.
-                        </p>
-                      </div>
-
-                      <span className="rounded-full bg-amber-200 px-3 py-1 text-[11px] font-bold text-amber-900">
-                        TEMPORAIRE
-                      </span>
-                    </div>
-
-                    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                      <div className="rounded-lg bg-white p-3">
-                        <p className="text-xs text-slate-400">
-                          Tarif
-                        </p>
-
-                        <p className="mt-1 font-semibold text-slate-800">
-                          {
-                            getFacturationTemporaire(
-                              selectedCompteur.type
-                            ).tarif
-                          }
-                        </p>
-                      </div>
-
-                      <div className="rounded-lg bg-white p-3">
-                        <p className="text-xs text-slate-400">
-                          Prix unitaire
-                        </p>
-
-                        <p className="mt-1 font-semibold text-slate-800">
-                          {formatAmount(
-                            getFacturationTemporaire(
-                              selectedCompteur.type
-                            ).prixUnitaire
-                          )}{' '}
-                          {
-                            getFacturationTemporaire(
-                              selectedCompteur.type
-                            ).unitePrix
-                          }
-                        </p>
-                      </div>
-
-                      <div className="rounded-lg bg-white p-3">
-                        <p className="text-xs text-slate-400">
-                          Montant consommation
-                        </p>
-
-                        <p className="mt-1 font-semibold text-slate-800">
-                          {formatAmount(
-                            (
-                              consumptionPreview ||
-                              0
-                            ) *
-                              getFacturationTemporaire(
-                                selectedCompteur.type
-                              ).prixUnitaire
-                          )}{' '}
-                          Ar
-                        </p>
-                      </div>
-
-                      <div className="rounded-lg bg-white p-3">
-                        <p className="text-xs text-slate-400">
-                          Taxes
-                        </p>
-
-                        <p className="mt-1 font-semibold text-slate-800">
-                          À calculer
-                        </p>
-                      </div>
-
-                      <div className="rounded-lg bg-white p-3">
-                        <p className="text-xs text-slate-400">
-                          Surtaxe
-                        </p>
-
-                        <p className="mt-1 font-semibold text-slate-800">
-                          À calculer
-                        </p>
-                      </div>
-
-                      <div className="rounded-lg bg-white p-3">
-                        <p className="text-xs text-slate-400">
-                          Montant à payer
-                        </p>
-
-                        <p className="mt-1 font-semibold text-slate-800">
-                          Temporaire
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="mt-3 rounded-lg border border-amber-200 bg-white p-3">
-                      <p className="text-xs text-amber-700">
-                        Net à payer
-                      </p>
-
-                      <p className="mt-1 text-lg font-bold text-amber-900">
-                        Temporaire — à calculer
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* =================================================
-                  RÉSUMÉ PÉRIODE
-              ================================================= */}
-
-              {selectedCompteur && (
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                  <h3 className="text-sm font-bold text-slate-800">
-                    Période de consommation
-                  </h3>
-
-                  <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-4">
-                    <div>
-                      <p className="text-xs text-slate-400">
-                        Installation
-                      </p>
-
-                      <p className="mt-1 text-sm font-semibold text-slate-700">
-                        {dateInstallation
-                          ? formatDate(
-                              dateInstallation
-                            )
-                          : '—'}
-                      </p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs text-slate-400">
-                        Relevé précédent
-                      </p>
-
-                      <p className="mt-1 text-sm font-semibold text-slate-700">
-                        {effectiveDateAncienReleve
-                          ? formatDate(
-                              effectiveDateAncienReleve
-                            )
-                          : 'À saisir'}
-                      </p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs text-slate-400">
-                        Relevé actuel
-                      </p>
-
-                      <p className="mt-1 text-sm font-semibold text-blue-700">
-                        {form.date_releve
-                          ? formatDate(
-                              form.date_releve
-                            )
-                          : '—'}
-                      </p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs text-slate-400">
-                        Nombre de jours
-                      </p>
-
-                      <p className="mt-1 text-sm font-bold text-blue-700">
-                        {nombreJours !==
-                        null
-                          ? `${nombreJours} ${
-                              nombreJours ===
-                              1
-                                ? 'jour'
-                                : 'jours'
-                            }`
-                          : '—'}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 rounded-lg border border-blue-100 bg-white px-3 py-2">
-                    <p className="text-xs text-slate-500">
-                      Source de la période
-                    </p>
-
-                    <p className="mt-1 text-sm font-semibold text-slate-700">
-                      {originePeriode ===
-                      'RELEVE_PRECEDENT'
-                        ? 'Relevé précédent enregistré dans le système'
-                        : originePeriode ===
-                          'RELEVE_ANTERIEUR'
-                        ? 'Relevé antérieur saisi manuellement'
-                        : 'À définir'}
-                    </p>
-                  </div>
-
-                  <p className="mt-3 text-xs text-slate-400">
+                  <p className="mt-3 text-xs text-jr-faible">
+                    {originePeriode === 'RELEVE_PRECEDENT'
+                      ? 'Source de la période : relevé précédent enregistré dans le système.'
+                      : originePeriode === 'RELEVE_ANTERIEUR'
+                      ? 'Source de la période : relevé antérieur saisi manuellement.'
+                      : 'Source de la période : à définir.'}{' '}
                     {isFirstReleve
                       ? 'Premier relevé : la date précédente et l’ancien index sont saisis manuellement.'
                       : 'La date précédente et l’ancien index sont récupérés automatiquement depuis le relevé précédent correspondant à la date choisie.'}
                   </p>
+                )}
+              </fieldset>
 
-                  <p className="mt-2 text-xs font-medium text-amber-700">
-                    Les informations tarifaires et fiscales affichées ci-dessus sont temporaires et ne constituent pas une facturation officielle.
+              {/* ---------- Index ---------- */}
+              <fieldset className="border-t border-jr-bordure pt-5">
+                <legend className="mb-3 px-0 text-sm font-semibold text-jr-titre">
+                  Index
+                </legend>
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div>
+                    <label
+                      htmlFor="champ-ancien-index"
+                      className="mb-1.5 block text-sm font-medium text-jr-doux"
+                    >
+                      Ancien index
+                    </label>
+
+                    <input
+                      id="champ-ancien-index"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      name="ancien_index"
+                      value={
+                        effectiveAncienIndex === '' ? '' : effectiveAncienIndex
+                      }
+                      onChange={handleChange}
+                      readOnly={!isFirstReleve}
+                      required
+                      className={`jr-field w-full rounded-md border px-3 py-2.5 text-sm tabular-nums ${
+                        isFirstReleve ? '' : 'cursor-default text-jr-doux'
+                      }`}
+                    />
+
+                    {isFirstReleve ? (
+                      <p className="mt-1 text-xs text-jr-lien">
+                        Premier relevé : saisissez l’ancien index.
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-xs text-jr-faible">
+                        Repris du nouvel index du relevé précédent.
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="champ-nouvel-index"
+                      className="mb-1.5 block text-sm font-medium text-jr-doux"
+                    >
+                      Nouvel index
+                    </label>
+
+                    <input
+                      id="champ-nouvel-index"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      name="nouvel_index"
+                      value={form.nouvel_index}
+                      onChange={handleChange}
+                      required
+                      aria-invalid={nouvelIndexInvalide || undefined}
+                      className={`jr-field w-full rounded-md border px-3 py-2.5 text-sm tabular-nums ${etatNouvelIndex}`}
+                    />
+
+                    {nouvelIndexInvalide && (
+                      <p className="mt-1 text-xs font-medium text-jr-err">
+                        Le nouvel index ne peut pas être inférieur à l’ancien.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </fieldset>
+
+              {/* ---------- Résultat ---------- */}
+              {selectedCompteur && (
+                <section
+                  aria-label="Résultat du calcul"
+                  aria-live="polite"
+                  className="flex flex-wrap items-end justify-between gap-x-8 gap-y-3 rounded-lg border p-5"
+                  style={{
+                    backgroundColor: stCompteur.fond,
+                    borderColor: stCompteur.trait,
+                  }}
+                >
+                  <div>
+                    <p className="text-sm text-jr-doux">Consommation calculée</p>
+
+                    <p
+                      className="mt-1 text-4xl font-semibold tabular-nums tracking-tight"
+                      style={{ color: stCompteur.texte }}
+                    >
+                      {apercuConso === null ? '—' : formatConso(apercuConso)}{' '}
+                      <span className="text-lg font-medium">
+                        {selectedCompteur.type === 'EAU' ? 'm³' : 'kWh'}
+                      </span>
+                    </p>
+
+                    <p className="mt-1 text-xs text-jr-faible">
+                      Nouvel index moins ancien index
+                    </p>
+                  </div>
+
+                  <div className="text-right">
+                    <p className="text-sm text-jr-doux">Durée de la période</p>
+
+                    <p className="mt-1 text-2xl font-semibold tabular-nums text-jr-texte">
+                      {nombreJours !== null && nombreJours !== undefined
+                        ? `${nombreJours} ${nombreJours === 1 ? 'jour' : 'jours'}`
+                        : '—'}
+                    </p>
+
+                    <p className="mt-1 text-xs text-jr-faible">
+                      Du {effectiveDateAncienReleve ? formatDate(effectiveDateAncienReleve) : 'à saisir'} au{' '}
+                      {form.date_releve ? formatDate(form.date_releve) : '—'}
+                    </p>
+                  </div>
+                </section>
+              )}
+
+              {/* ---------- Facturation temporaire ---------- */}
+              {selectedCompteur && (
+                <div className="jr-carte-elec rounded-lg p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-jr-titre">
+                        Paramètres tarifaires (temporaire)
+                      </h3>
+
+                      <p className="mt-1 text-xs text-jr-doux">
+                        Ces valeurs servent uniquement à l'affichage et doivent
+                        être validées.
+                      </p>
+                    </div>
+
+                    <span
+                      className="shrink-0 rounded-full border px-3 py-1 text-xs font-semibold"
+                      style={{
+                        color: 'var(--jr-attention)',
+                        borderColor: 'var(--jr-attention)',
+                      }}
+                    >
+                      Provisoire
+                    </span>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <div className="jr-verre rounded-md border border-jr-bordure p-3">
+                      <p className="text-xs text-jr-faible">Tarif</p>
+                      <p className="mt-1 text-sm font-medium text-jr-texte">
+                        {getFacturationTemporaire(selectedCompteur.type).tarif}
+                      </p>
+                    </div>
+
+                    <div className="jr-verre rounded-md border border-jr-bordure p-3">
+                      <p className="text-xs text-jr-faible">Prix unitaire</p>
+                      <p className="mt-1 text-sm font-medium tabular-nums text-jr-texte">
+                        {formatAmount(
+                          getFacturationTemporaire(selectedCompteur.type)
+                            .prixUnitaire
+                        )}{' '}
+                        {getFacturationTemporaire(selectedCompteur.type).unitePrix}
+                      </p>
+                    </div>
+
+                    <div className="jr-verre rounded-md border border-jr-bordure p-3">
+                      <p className="text-xs text-jr-faible">Montant consommation</p>
+                      <p className="mt-1 text-sm font-medium tabular-nums text-jr-texte">
+                        {formatAmount(
+                          (consumptionPreview || 0) *
+                            getFacturationTemporaire(selectedCompteur.type)
+                              .prixUnitaire
+                        )}{' '}
+                        Ar
+                      </p>
+                    </div>
+
+                    <div className="jr-verre rounded-md border border-jr-bordure p-3">
+                      <p className="text-xs text-jr-faible">Taxes</p>
+                      <p className="mt-1 text-sm font-medium text-jr-texte">
+                        À calculer
+                      </p>
+                    </div>
+
+                    <div className="jr-verre rounded-md border border-jr-bordure p-3">
+                      <p className="text-xs text-jr-faible">Surtaxe</p>
+                      <p className="mt-1 text-sm font-medium text-jr-texte">
+                        À calculer
+                      </p>
+                    </div>
+
+                    <div className="jr-verre rounded-md border border-jr-bordure p-3">
+                      <p className="text-xs text-jr-faible">Montant à payer</p>
+                      <p className="mt-1 text-sm font-medium text-jr-texte">
+                        Temporaire
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="jr-verre mt-3 rounded-md border border-jr-bordure p-3">
+                    <p className="text-xs" style={{ color: 'var(--jr-attention)' }}>
+                      Net à payer
+                    </p>
+                    <p className="mt-1 text-lg font-semibold text-jr-titre">
+                      Temporaire — à calculer
+                    </p>
+                  </div>
+
+                  <p
+                    className="mt-3 text-xs font-medium"
+                    style={{ color: 'var(--jr-attention)' }}
+                  >
+                    Les informations tarifaires et fiscales affichées ci-dessus
+                    sont temporaires et ne constituent pas une facturation
+                    officielle.
                   </p>
                 </div>
               )}
 
               {/* ERREUR MODAL */}
-
               {error && (
-                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                <div
+                  role="alert"
+                  className="rounded-md border border-jr-err-bordure bg-jr-err-pale px-4 py-3 text-sm font-medium text-jr-err"
+                >
                   {error}
                 </div>
               )}
 
               {/* BOUTONS */}
-
-              <div className="flex justify-end gap-3 border-t border-slate-200 pt-5">
+              <div className="flex justify-end gap-2 border-t border-jr-bordure pt-5">
                 <button
                   type="button"
-                  onClick={
-                    closeModal
-                  }
-                  disabled={
-                    saving
-                  }
-                  className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  onClick={closeModal}
+                  disabled={saving}
+                  className="rounded-md px-4 py-2.5 text-sm font-medium text-jr-doux transition-colors hover:bg-[var(--jr-eau-pale)] hover:text-jr-texte disabled:opacity-50 motion-reduce:transition-none"
                 >
                   Annuler
                 </button>
 
                 <button
                   type="submit"
-                  disabled={
-                    saving ||
-                    loadingHistorique
-                  }
-                  className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                  disabled={saving || loadingHistorique}
+                  className="jr-btn jr-btn-elec inline-flex items-center gap-2 rounded-md px-4 py-2.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {saving ? (
                     <RefreshCw
-                      size={
-                        17
-                      }
-                      className="animate-spin"
+                      size={17}
+                      aria-hidden="true"
+                      className="animate-spin motion-reduce:animate-none"
                     />
                   ) : (
-                    <Save
-                      size={
-                        17
-                      }
-                    />
+                    <Save size={17} aria-hidden="true" />
                   )}
 
                   {saving
@@ -4526,6 +3449,187 @@ function RelevesPage() {
             </form>
           </div>
         </div>
+      )}
+    </AdminShell>
+  );
+}
+
+/* =========================================================
+   PASTILLE DE TYPE (eau = bleu, électricité = orange)
+========================================================= */
+function PastilleType({ type }) {
+  const st = styleType(type);
+  const Icone = type === 'EAU' ? Droplets : Zap;
+
+  return (
+    <span
+      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md"
+      style={{ backgroundColor: st.fond, color: st.texte }}
+      title={st.libelle}
+    >
+      <Icone size={18} aria-hidden="true" />
+      <span className="sr-only">{st.libelle}</span>
+    </span>
+  );
+}
+
+/* =========================================================
+   INITIALES DE L'ABONNÉ (teinte selon le numéro d'abonné)
+========================================================= */
+function Initiales({ releve }) {
+  const st = styleType(teinteAbonne(releve.numero_abonne));
+
+  return (
+    <span
+      aria-hidden="true"
+      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold"
+      style={{ backgroundColor: st.fond, color: st.texte }}
+    >
+      {initialesDe(releve)}
+    </span>
+  );
+}
+
+/* =========================================================
+   ACTIONS : visibles au survol sur ordinateur,
+   toujours visibles sur mobile
+========================================================= */
+function ActionsReleve({
+  releve,
+  peutModifier,
+  peutSupprimer,
+  onPdf,
+  onEdit,
+  onDelete,
+  auSurvol = false,
+  avecTexte = false,
+}) {
+  const visibilite = auSurvol
+    ? 'md:opacity-0 md:transition-opacity md:group-hover:opacity-100 md:group-focus-within:opacity-100 focus-visible:opacity-100 motion-reduce:transition-none'
+    : '';
+
+  const base =
+    'inline-flex items-center gap-2 rounded-md p-2 text-sm font-medium transition-colors motion-reduce:transition-none';
+
+  const numero = releve.numero_compteur || '';
+
+  return (
+    <div className="flex gap-1">
+      <button
+        type="button"
+        onClick={() => onPdf(releve)}
+        title="Générer le PDF"
+        aria-label={`Générer le PDF du relevé du compteur ${numero}`}
+        className={`${base} ${visibilite} text-jr-doux hover:bg-[var(--jr-eau-pale)] hover:text-jr-lien`}
+      >
+        <FileText size={17} aria-hidden="true" />
+        {avecTexte && 'PDF'}
+      </button>
+
+      {peutModifier && (
+        <button
+          type="button"
+          onClick={() => onEdit(releve)}
+          title="Modifier le relevé"
+          aria-label={`Modifier le relevé du compteur ${numero}`}
+          className={`${base} ${visibilite} text-jr-doux hover:bg-[var(--jr-eau-pale)] hover:text-jr-lien`}
+        >
+          <Pencil size={17} aria-hidden="true" />
+          {avecTexte && 'Modifier'}
+        </button>
+      )}
+
+      {peutSupprimer && (
+        <button
+          type="button"
+          onClick={() => onDelete(releve)}
+          title="Supprimer le dernier relevé du compteur"
+          aria-label={`Supprimer le dernier relevé du compteur ${numero}`}
+          className={`${base} ${visibilite} text-jr-doux hover:bg-jr-err-pale hover:text-jr-err`}
+        >
+          <Trash2 size={17} aria-hidden="true" />
+          {avecTexte && 'Supprimer'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* =========================================================
+   SQUELETTE DE CHARGEMENT
+========================================================= */
+function Squelette() {
+  return (
+    <div aria-busy="true" aria-live="polite" className="divide-y divide-jr-bordure">
+      <span className="sr-only">Chargement des relevés</span>
+
+      {Array.from({ length: 6 }, (_, i) => (
+        <div key={i} className="flex items-center gap-4 px-5 py-4 sm:px-6">
+          <span className="jr-shimmer h-9 w-9 shrink-0 rounded-md" />
+          <span className="jr-shimmer h-3 w-28 rounded" />
+          <span
+            className="jr-shimmer h-3 flex-1 rounded"
+            style={{ maxWidth: `${45 + ((i * 13) % 30)}%` }}
+          />
+          <span className="jr-shimmer hidden h-3 w-20 rounded sm:block" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* =========================================================
+   ÉTAT VIDE / AUCUN RÉSULTAT
+========================================================= */
+function EtatVide({ listeVide, peutAjouter, onAjouter, onReset }) {
+  return (
+    <div className="flex flex-col items-center px-6 py-14 text-center">
+      <svg width="96" height="96" viewBox="0 0 96 96" fill="none" aria-hidden="true">
+        <path
+          d="M40 12c-12 16-22 28-22 42a22 22 0 0 0 44 0c0-14-10-26-22-42Z"
+          fill="var(--jr-eau-pale)"
+          stroke="var(--jr-eau-clair)"
+          strokeWidth="2"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M64 30 50 56h12l-6 22 20-30H64l8-18Z"
+          fill="var(--jr-elec)"
+          stroke="var(--jr-elec-fonce)"
+          strokeWidth="2"
+          strokeLinejoin="round"
+        />
+      </svg>
+
+      <h3 className="mt-4 text-base font-semibold text-jr-titre">
+        {listeVide ? 'Aucun relevé pour le moment' : 'Aucun relevé ne correspond'}
+      </h3>
+
+      <p className="mt-1 max-w-sm text-sm text-jr-doux">
+        {listeVide
+          ? 'Les relevés saisis sur les compteurs apparaîtront ici avec leur consommation.'
+          : 'Essayez un autre numéro de compteur ou d’abonné, ou retirez le filtre de type.'}
+      </p>
+
+      {listeVide ? (
+        peutAjouter && (
+          <button
+            type="button"
+            onClick={onAjouter}
+            className="jr-btn jr-btn-elec mt-5 inline-flex items-center gap-2 rounded-md px-4 py-2.5 text-sm font-semibold"
+          >
+            <Plus size={18} aria-hidden="true" />
+            Nouveau relevé
+          </button>
+        )
+      ) : (
+        <button
+          type="button"
+          onClick={onReset}
+          className="mt-5 rounded-md border border-jr-bordure-forte px-4 py-2.5 text-sm font-medium text-jr-lien transition-colors hover:bg-[var(--jr-eau-pale)] motion-reduce:transition-none"
+        >
+          Réinitialiser la recherche
+        </button>
       )}
     </div>
   );

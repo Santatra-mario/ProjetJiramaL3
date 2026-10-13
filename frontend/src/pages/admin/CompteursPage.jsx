@@ -1,1294 +1,785 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import {
+  CircleAlert,
+  CircleCheck,
+  Download,
+  FileText,
   Plus,
-  Search,
-  Pencil,
-  Power,
-  X,
-  Save,
   RefreshCw,
-  Gauge,
-  Droplets,
-  Zap,
-  CalendarDays,
-  UserRound,
+  X,
 } from 'lucide-react';
 
 import axiosClient from '../../api/axiosClient.js';
 
 import Sidebar from '../../components/admin/Sidebar.jsx';
 import Header from '../../components/admin/Header.jsx';
+import AdminShell from '../../components/admin/AdminShell.jsx';
+
+import CompteursStats from '../../components/admin/compteurs/CompteursStats.jsx';
+import CompteursFiltres from '../../components/admin/compteurs/CompteursFiltres.jsx';
+import CompteursTable from '../../components/admin/compteurs/CompteursTable.jsx';
+import CompteurModal from '../../components/admin/compteurs/CompteurModal.jsx';
+import ConfirmStatutDialog from '../../components/admin/compteurs/ConfirmStatutDialog.jsx';
+
+import {
+  COLONNES_TRI,
+  STATUTS,
+  TYPES,
+  exporterCsv as genererCsv,
+  exporterPdf as genererPdf,
+  filtrer,
+  formatNombre,
+  nomAbonne,
+  trier,
+} from '../../components/admin/compteurs/compteursUtils.js';
+
+const INTERVALLE_ACTUALISATION = 60000;
 
 function CompteursPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
+  /* ======================================================
+     ÉTAT
+  ====================================================== */
   const [compteurs, setCompteurs] = useState([]);
   const [abonnes, setAbonnes] = useState([]);
+  const [currentUser, setCurrentUser] = useState(null);
 
-  const [currentUser, setCurrentUser] =
-    useState(null);
+  const [loading, setLoading] = useState(true);
+  const [actualisation, setActualisation] = useState(false);
+  const [erreurChargement, setErreurChargement] = useState('');
+  const [derniereMaj, setDerniereMaj] = useState(null);
 
-  const [loading, setLoading] =
-    useState(true);
+  const [loadingAbonnes, setLoadingAbonnes] = useState(true);
+  const [erreurAbonnes, setErreurAbonnes] = useState('');
 
-  const [loadingAbonnes, setLoadingAbonnes] =
-    useState(true);
+  const [saving, setSaving] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const [saving, setSaving] =
-    useState(false);
+  const [modalOuvert, setModalOuvert] = useState(false);
+  const [compteurEnEdition, setCompteurEnEdition] = useState(null);
+  const [erreurModal, setErreurModal] = useState('');
+  const [cleErreur, setCleErreur] = useState(0);
 
-  const [error, setError] =
-    useState('');
+  const [confirmation, setConfirmation] = useState(null);
+  const [surligneId, setSurligneId] = useState(null);
+  const [toasts, setToasts] = useState([]);
 
-  const [success, setSuccess] =
-    useState('');
+  const [page, setPage] = useState(1);
+  const [taillePage, setTaillePage] = useState(10);
+  const [saisie, setSaisie] = useState(() => searchParams.get('q') || '');
 
-  const [sidebarOpen, setSidebarOpen] =
-    useState(false);
+  const idToast = useRef(0);
+  const minuteursToast = useRef(new Set());
+  const minuteurSurligne = useRef(null);
+  const requetesStatut = useRef(0);
+  const derniereMajRef = useRef(0);
+  const occupeRef = useRef(false);
 
-  const [search, setSearch] =
-    useState('');
+  occupeRef.current =
+    modalOuvert || saving || Boolean(confirmation) || requetesStatut.current > 0;
 
-  const [typeFilter, setTypeFilter] =
-    useState('');
+  /* ======================================================
+     FILTRES, TRI : stockés dans l'URL (vue partageable)
+  ====================================================== */
+  const q = searchParams.get('q') || '';
 
-  const [statusFilter, setStatusFilter] =
-    useState('');
+  const typeUrl = searchParams.get('type');
+  const type = TYPES.some((t) => t.valeur === typeUrl) ? typeUrl : '';
 
-  const [modalOpen, setModalOpen] =
-    useState(false);
+  const statutUrl = searchParams.get('statut');
+  const statut = STATUTS.some((s) => s.valeur === statutUrl) ? statutUrl : '';
 
-  const [editingCompteur, setEditingCompteur] =
-    useState(null);
+  const abonne = searchParams.get('abonne') || '';
 
-  const [form, setForm] = useState({
-    numero_compteur: '',
-    type: 'ELECTRICITE',
-    date_installation: '',
-    statut: 'ACTIF',
-    abonne_id: '',
-  });
+  const triUrl = searchParams.get('tri');
+  const tri = COLONNES_TRI.includes(triUrl) ? triUrl : '';
+  const dir = searchParams.get('dir') === 'desc' ? 'desc' : 'asc';
 
-  // =====================================================
-  // UTILISATEUR CONNECTÉ
-  // =====================================================
+  const majParams = useCallback(
+    (changements) => {
+      setSearchParams(
+        (precedent) => {
+          const suivant = new URLSearchParams(precedent);
+
+          Object.entries(changements).forEach(([cle, valeur]) => {
+            if (valeur) suivant.set(cle, valeur);
+            else suivant.delete(cle);
+          });
+
+          return suivant;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
+
+  // Recherche : anti-rebond de 250 ms avant d'écrire dans l'URL
+  const qRef = useRef(q);
+  qRef.current = q;
 
   useEffect(() => {
-    const storedUser =
-      localStorage.getItem('user');
+    const valeur = saisie.trim();
+    if (valeur === qRef.current) return undefined;
+
+    const minuteur = setTimeout(() => majParams({ q: valeur }), 250);
+    return () => clearTimeout(minuteur);
+  }, [saisie, majParams]);
+
+  /* ======================================================
+     TOASTS (disparaissent seuls)
+  ====================================================== */
+  const ajouterToast = useCallback((genre, message) => {
+    idToast.current += 1;
+    const id = idToast.current;
+
+    setToasts((precedent) => [...precedent.slice(-3), { id, genre, message }]);
+
+    const minuteur = setTimeout(() => {
+      minuteursToast.current.delete(minuteur);
+      setToasts((precedent) => precedent.filter((t) => t.id !== id));
+    }, genre === 'erreur' ? 6000 : 4000);
+
+    minuteursToast.current.add(minuteur);
+  }, []);
+
+  const fermerToast = (id) =>
+    setToasts((precedent) => precedent.filter((t) => t.id !== id));
+
+  useEffect(() => {
+    const minuteurs = minuteursToast.current;
+    return () => minuteurs.forEach(clearTimeout);
+  }, []);
+
+  const surligner = useCallback((id) => {
+    clearTimeout(minuteurSurligne.current);
+    setSurligneId(id);
+    minuteurSurligne.current = setTimeout(() => setSurligneId(null), 2500);
+  }, []);
+
+  useEffect(() => () => clearTimeout(minuteurSurligne.current), []);
+
+  /* ======================================================
+     DÉCONNEXION
+  ====================================================== */
+  const deconnecter = useCallback(() => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+
+    navigate('/', { replace: true });
+  }, [navigate]);
+
+  /* ======================================================
+     UTILISATEUR CONNECTÉ (inchangé)
+  ====================================================== */
+  useEffect(() => {
+    const storedUser = localStorage.getItem('user');
 
     if (!storedUser) {
-      navigate('/', {
-        replace: true,
-      });
-
+      navigate('/', { replace: true });
       return;
     }
 
     try {
-      const user =
-        JSON.parse(storedUser);
+      const user = JSON.parse(storedUser);
 
-      if (
-        user.role !==
-        'ADMINISTRATEUR'
-      ) {
-        navigate('/', {
-          replace: true,
-        });
-
+      if (user.role !== 'ADMINISTRATEUR') {
+        navigate('/', { replace: true });
         return;
       }
 
       setCurrentUser(user);
     } catch (error) {
-      console.error(
-        'Erreur utilisateur :',
-        error
-      );
+      console.error('Erreur utilisateur :', error);
 
       localStorage.removeItem('token');
       localStorage.removeItem('user');
 
-      navigate('/', {
-        replace: true,
-      });
+      navigate('/', { replace: true });
     }
   }, [navigate]);
 
-  // =====================================================
-  // CHARGER LES COMPTEURS
-  // =====================================================
+  /* ======================================================
+     CHARGER LES COMPTEURS
+     silencieux : pas de toast d'erreur, pas de clignotement
+  ====================================================== */
+  const chargerCompteurs = useCallback(
+    async ({ silencieux = false } = {}) => {
+      setActualisation(true);
 
-  const loadCompteurs = async () => {
-    try {
-      setLoading(true);
-      setError('');
+      try {
+        const response = await axiosClient.get('/compteurs');
 
-      const response =
-        await axiosClient.get(
-          '/compteurs'
-        );
+        setCompteurs(response.data.compteurs || []);
+        setErreurChargement('');
+        setDerniereMaj(new Date());
+        derniereMajRef.current = Date.now();
+      } catch (err) {
+        console.error('Erreur chargement compteurs :', err);
 
-      setCompteurs(
-        response.data.compteurs || []
-      );
-    } catch (err) {
-      console.error(
-        'Erreur chargement compteurs :',
-        err
-      );
+        if (err.response?.status === 401) {
+          deconnecter();
+          return;
+        }
 
-      if (
-        err.response?.status === 401
-      ) {
-        localStorage.removeItem(
-          'token'
-        );
+        const message =
+          err.response?.data?.message || 'Impossible de charger les compteurs.';
 
-        localStorage.removeItem(
-          'user'
-        );
-
-        navigate('/', {
-          replace: true,
-        });
-
-        return;
+        setErreurChargement(message);
+        if (!silencieux) ajouterToast('erreur', message);
+      } finally {
+        setActualisation(false);
+        setLoading(false);
       }
+    },
+    [ajouterToast, deconnecter]
+  );
 
-      setError(
-        err.response?.data?.message ||
-          'Impossible de charger les compteurs.'
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // =====================================================
-  // CHARGER LES ABONNÉS
-  // =====================================================
-
-  const loadAbonnes = async () => {
+  /* ======================================================
+     CHARGER LES ABONNÉS (erreur séparée de celle des compteurs)
+  ====================================================== */
+  const chargerAbonnes = useCallback(async () => {
     try {
       setLoadingAbonnes(true);
+      setErreurAbonnes('');
 
-      const response =
-        await axiosClient.get(
-          '/abonnes'
-        );
+      const response = await axiosClient.get('/abonnes');
 
-      setAbonnes(
-        response.data.abonnes || []
-      );
+      setAbonnes(response.data.abonnes || []);
     } catch (err) {
-      console.error(
-        'Erreur chargement abonnés :',
-        err
-      );
+      console.error('Erreur chargement abonnés :', err);
 
-      setError(
+      setErreurAbonnes(
         err.response?.data?.message ||
           'Impossible de charger la liste des abonnés.'
       );
     } finally {
       setLoadingAbonnes(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (currentUser) {
-      loadCompteurs();
-      loadAbonnes();
+      chargerCompteurs();
+      chargerAbonnes();
     }
-  }, [currentUser]);
+  }, [currentUser, chargerCompteurs, chargerAbonnes]);
 
-  // =====================================================
-  // FILTRAGE
-  // =====================================================
+  /* ======================================================
+     ACTUALISATION AUTOMATIQUE (toutes les 60 s, onglet visible)
+  ====================================================== */
+  useEffect(() => {
+    if (!currentUser) return undefined;
 
-  const filteredCompteurs = useMemo(() => {
-    const query =
-      search.trim().toLowerCase();
+    const minuteur = setInterval(() => {
+      if (document.visibilityState !== 'visible' || occupeRef.current) return;
+      chargerCompteurs({ silencieux: true });
+    }, INTERVALLE_ACTUALISATION);
 
-    return compteurs.filter(
-      (compteur) => {
-        const nomAbonne =
-          `${compteur.abonne_prenom || ''} ${
-            compteur.abonne_nom || ''
-          }`
-            .trim()
-            .toLowerCase();
-
-        const matchesSearch =
-          !query ||
-          [
-            compteur.numero_compteur,
-            compteur.type,
-            compteur.numero_abonne,
-            nomAbonne,
-          ].some((value) =>
-            String(value || '')
-              .toLowerCase()
-              .includes(query)
-          );
-
-        const matchesType =
-          !typeFilter ||
-          compteur.type ===
-            typeFilter;
-
-        const matchesStatus =
-          !statusFilter ||
-          compteur.statut ===
-            statusFilter;
-
-        return (
-          matchesSearch &&
-          matchesType &&
-          matchesStatus
-        );
+    const auRetour = () => {
+      if (
+        document.visibilityState === 'visible' &&
+        !occupeRef.current &&
+        Date.now() - derniereMajRef.current > INTERVALLE_ACTUALISATION
+      ) {
+        chargerCompteurs({ silencieux: true });
       }
-    );
-  }, [
-    compteurs,
-    search,
-    typeFilter,
-    statusFilter,
-  ]);
+    };
 
-  // =====================================================
-  // OUVRIR AJOUT
-  // =====================================================
+    document.addEventListener('visibilitychange', auRetour);
 
-  const openCreateModal = () => {
-    setEditingCompteur(null);
+    return () => {
+      clearInterval(minuteur);
+      document.removeEventListener('visibilitychange', auRetour);
+    };
+  }, [currentUser, chargerCompteurs]);
 
-    setForm({
-      numero_compteur: '',
-      type: 'ELECTRICITE',
-      date_installation: '',
-      statut: 'ACTIF',
-      abonne_id: '',
+  /* ======================================================
+     DONNÉES DÉRIVÉES : filtre, tri, compteurs de pastilles
+  ====================================================== */
+  const filtres = useMemo(
+    () => filtrer(compteurs, { q, type, statut, abonne }),
+    [compteurs, q, type, statut, abonne]
+  );
+
+  const tries = useMemo(() => trier(filtres, tri, dir), [filtres, tri, dir]);
+
+  const comptesType = useMemo(() => {
+    const base = filtrer(compteurs, { q, statut, abonne });
+
+    return {
+      '': base.length,
+      EAU: base.filter((c) => c.type === 'EAU').length,
+      ELECTRICITE: base.filter((c) => c.type === 'ELECTRICITE').length,
+    };
+  }, [compteurs, q, statut, abonne]);
+
+  const comptesStatut = useMemo(() => {
+    const base = filtrer(compteurs, { q, type, abonne });
+
+    return {
+      '': base.length,
+      ACTIF: base.filter((c) => c.statut === 'ACTIF').length,
+      INACTIF: base.filter((c) => c.statut === 'INACTIF').length,
+      A_VERIFIER: base.filter((c) => c.statut === 'A_VERIFIER').length,
+    };
+  }, [compteurs, q, type, abonne]);
+
+  // Abonnés qui ont au moins un compteur (pour le filtre)
+  const abonnesOptions = useMemo(() => {
+    const parId = new Map();
+
+    compteurs.forEach((c) => {
+      if (!parId.has(c.abonne_id)) {
+        parId.set(c.abonne_id, {
+          id: String(c.abonne_id),
+          label: `${c.numero_abonne} - ${nomAbonne(c) || '—'}`,
+        });
+      }
     });
 
-    setError('');
-    setSuccess('');
+    return [...parId.values()].sort((a, b) => a.label.localeCompare(b.label, 'fr'));
+  }, [compteurs]);
 
-    setModalOpen(true);
+  /* ---------- Pagination ---------- */
+  useEffect(() => {
+    setPage(1);
+  }, [q, type, statut, abonne, tri, dir, taillePage]);
+
+  const nbPages = Math.max(1, Math.ceil(tries.length / taillePage));
+  const pageCourante = Math.min(page, nbPages);
+  const debut = (pageCourante - 1) * taillePage;
+  const elements = tries.slice(debut, debut + taillePage);
+
+  const filtreActif = Boolean(q || saisie.trim() || type || statut || abonne);
+
+  /* ======================================================
+     ACTIONS : filtres et tri
+  ====================================================== */
+  const resetFiltres = () => {
+    setSaisie('');
+    majParams({ q: '', type: '', statut: '', abonne: '' });
   };
 
-  // =====================================================
-  // OUVRIR MODIFICATION
-  // =====================================================
+  const basculerType = (valeur) => majParams({ type: type === valeur ? '' : valeur });
+  const basculerStatut = (valeur) =>
+    majParams({ statut: statut === valeur ? '' : valeur });
 
-  const openEditModal = (
-    compteur
-  ) => {
-    setEditingCompteur(
-      compteur
-    );
-
-    setForm({
-      numero_compteur:
-        compteur.numero_compteur ||
-        '',
-      type:
-        compteur.type ||
-        'ELECTRICITE',
-      date_installation:
-        compteur.date_installation
-          ? String(
-              compteur.date_installation
-            ).slice(0, 10)
-          : '',
-      statut:
-        compteur.statut ||
-        'ACTIF',
-      abonne_id:
-        String(
-          compteur.abonne_id ||
-            ''
-        ),
-    });
-
-    setError('');
-    setSuccess('');
-
-    setModalOpen(true);
+  // Clic sur un en-tête : croissant → décroissant → ordre d'origine
+  const changerTri = (colonne) => {
+    if (tri !== colonne) majParams({ tri: colonne, dir: 'asc' });
+    else if (dir === 'asc') majParams({ tri: colonne, dir: 'desc' });
+    else majParams({ tri: '', dir: '' });
   };
 
-  // =====================================================
-  // FERMER MODAL
-  // =====================================================
-
-  const closeModal = () => {
-    if (saving) {
+  const changerTriMobile = (valeur) => {
+    if (!valeur) {
+      majParams({ tri: '', dir: '' });
       return;
     }
 
-    setModalOpen(false);
-    setEditingCompteur(null);
+    const [colonne, sens] = valeur.split(':');
+    majParams({ tri: colonne, dir: sens });
   };
 
-  // =====================================================
-  // FORMULAIRE
-  // =====================================================
-
-  const handleChange = (
-    event
-  ) => {
-    const {
-      name,
-      value,
-    } = event.target;
-
-    setForm(
-      (previous) => ({
-        ...previous,
-        [name]: value,
-      })
-    );
+  /* ======================================================
+     ACTIONS : modal d'ajout / modification
+  ====================================================== */
+  const ouvrirCreation = () => {
+    setCompteurEnEdition(null);
+    setErreurModal('');
+    setModalOuvert(true);
   };
 
-  // =====================================================
-  // ENREGISTRER
-  // =====================================================
+  const ouvrirEdition = (compteur) => {
+    setCompteurEnEdition(compteur);
+    setErreurModal('');
+    setModalOuvert(true);
+  };
 
-  const handleSubmit = async (
-    event
-  ) => {
-    event.preventDefault();
+  const fermerModal = () => {
+    if (saving) return;
 
-    setError('');
-    setSuccess('');
+    setModalOuvert(false);
+    setCompteurEnEdition(null);
+    setErreurModal('');
+  };
+
+  const enregistrer = async (data) => {
+    setErreurModal('');
     setSaving(true);
 
     try {
-      if (!form.abonne_id) {
-        setError(
-          'Veuillez sélectionner un abonné.'
-        );
+      const response = compteurEnEdition
+        ? await axiosClient.put(`/compteurs/${compteurEnEdition.id}`, data)
+        : await axiosClient.post('/compteurs', data);
 
-        setSaving(false);
+      const idCible = compteurEnEdition?.id ?? response.data.compteur?.id ?? null;
 
+      ajouterToast(
+        'succes',
+        response.data.message || 'Compteur enregistré avec succès.'
+      );
+
+      setModalOuvert(false);
+      setCompteurEnEdition(null);
+
+      if (idCible) surligner(idCible);
+
+      await chargerCompteurs({ silencieux: true });
+    } catch (err) {
+      console.error('Erreur enregistrement compteur :', err);
+
+      if (err.response?.status === 401) {
+        deconnecter();
         return;
       }
 
-      const data = {
-        numero_compteur:
-          form.numero_compteur.trim(),
-
-        type: form.type,
-
-        date_installation:
-          form.date_installation ||
-          null,
-
-        statut: form.statut,
-
-        abonne_id: Number(
-          form.abonne_id
-        ),
-      };
-
-      let response;
-
-      if (editingCompteur) {
-        response =
-          await axiosClient.put(
-            `/compteurs/${editingCompteur.id}`,
-            data
-          );
-      } else {
-        response =
-          await axiosClient.post(
-            '/compteurs',
-            data
-          );
-      }
-
-      setSuccess(
-        response.data.message ||
-          'Compteur enregistré avec succès.'
-      );
-
-      await loadCompteurs();
-
-      setTimeout(() => {
-        setModalOpen(false);
-        setEditingCompteur(
-          null
-        );
-      }, 500);
-    } catch (err) {
-      console.error(
-        'Erreur enregistrement compteur :',
-        err
-      );
-
-      setError(
-        err.response?.data?.message ||
-          'Une erreur est survenue.'
-      );
+      setErreurModal(err.response?.data?.message || 'Une erreur est survenue.');
+      setCleErreur((precedent) => precedent + 1);
     } finally {
       setSaving(false);
     }
   };
 
-  // =====================================================
-  // MODIFIER LE STATUT
-  // =====================================================
+  /* ======================================================
+     ACTIONS : changement de statut
+     confirmation intégrée + mise à jour optimiste
+  ====================================================== */
+  const demanderStatut = useCallback((compteur, nouveauStatut) => {
+    if (compteur.statut === nouveauStatut) return;
+    setConfirmation({ compteur, statut: nouveauStatut });
+  }, []);
 
-  const changeStatus = async (
-    compteur,
-    nouveauStatut
-  ) => {
-    const labels = {
-      ACTIF: 'ACTIF',
-      INACTIF: 'INACTIF',
-      A_VERIFIER: 'À VÉRIFIER',
-    };
+  const confirmerStatut = async () => {
+    if (!confirmation) return;
 
-    const confirmed =
-      window.confirm(
-        `Voulez-vous mettre le compteur ${compteur.numero_compteur} au statut "${labels[nouveauStatut]}" ?`
+    const { compteur, statut: nouveauStatut } = confirmation;
+    const ancienStatut = compteur.statut;
+
+    setConfirmation(null);
+
+    requetesStatut.current += 1;
+
+    const appliquer = (valeur) =>
+      setCompteurs((precedent) =>
+        precedent.map((c) => (c.id === compteur.id ? { ...c, statut: valeur } : c))
       );
 
-    if (!confirmed) {
-      return;
-    }
+    // La ligne change tout de suite…
+    appliquer(nouveauStatut);
+    surligner(compteur.id);
 
     try {
-      setError('');
-      setSuccess('');
+      const response = await axiosClient.patch(`/compteurs/${compteur.id}/statut`, {
+        statut: nouveauStatut,
+      });
 
-      const response =
-        await axiosClient.patch(
-          `/compteurs/${compteur.id}/statut`,
-          {
-            statut: nouveauStatut,
-          }
-        );
-
-      setSuccess(
-        response.data.message ||
-          'Statut modifié avec succès.'
-      );
-
-      await loadCompteurs();
+      ajouterToast('succes', response.data.message || 'Statut modifié avec succès.');
     } catch (err) {
-      console.error(
-        'Erreur changement statut :',
-        err
-      );
+      console.error('Erreur changement statut :', err);
 
-      setError(
-        err.response?.data?.message ||
-          'Impossible de modifier le statut.'
+      // … puis retour arrière si le serveur refuse
+      appliquer(ancienStatut);
+
+      if (err.response?.status === 401) {
+        deconnecter();
+        return;
+      }
+
+      ajouterToast(
+        'erreur',
+        err.response?.data?.message || 'Impossible de modifier le statut.'
       );
+    } finally {
+      requetesStatut.current -= 1;
+
+      if (requetesStatut.current === 0) {
+        chargerCompteurs({ silencieux: true });
+      }
     }
   };
 
-  // =====================================================
-  // DÉCONNEXION
-  // =====================================================
-
-  const handleLogout = () => {
-    localStorage.removeItem(
-      'token'
-    );
-
-    localStorage.removeItem(
-      'user'
-    );
-
-    navigate('/', {
-      replace: true,
-    });
+  /* ======================================================
+     ACTIONS : exports de la liste filtrée
+  ====================================================== */
+  const exporterCsv = () => {
+    genererCsv(tries);
+    ajouterToast('succes', `${formatNombre(tries.length)} compteur(s) exporté(s) en CSV.`);
   };
 
-  // =====================================================
-  // CHARGEMENT INITIAL
-  // =====================================================
+  const exporterPdf = async () => {
+    try {
+      await genererPdf(tries);
+      ajouterToast('succes', `${formatNombre(tries.length)} compteur(s) exporté(s) en PDF.`);
+    } catch (err) {
+      console.error('Erreur export PDF :', err);
+      ajouterToast('erreur', 'Impossible de générer le PDF.');
+    }
+  };
 
+  /* ======================================================
+     RENDU
+  ====================================================== */
   if (!currentUser) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-100">
-        <div className="rounded-xl bg-white px-6 py-5 text-sm text-slate-500 shadow-sm">
-          Chargement...
+      <AdminShell intensite="calme">
+        <div className="flex min-h-screen items-center justify-center">
+          <div className="jr-verre rounded-lg border border-jr-bordure px-6 py-5 text-sm text-jr-doux shadow-sm">
+            Chargement...
+          </div>
         </div>
-      </div>
+      </AdminShell>
     );
   }
 
+  const premierChargement = (loading || actualisation) && compteurs.length === 0;
+
+  const heureMaj = derniereMaj
+    ? derniereMaj.toLocaleTimeString('fr-FR', {
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : null;
+
   return (
-    <div className="min-h-screen bg-slate-100">
-
-      {/* =================================================
-          SIDEBAR
-      ================================================= */}
-
+    <AdminShell
+      intensite="calme"
+      className="selection:bg-[var(--jr-elec)] selection:text-[var(--jr-sur-elec)]"
+    >
+      {/* SIDEBAR */}
       <Sidebar
         isOpen={sidebarOpen}
-        onClose={() =>
-          setSidebarOpen(false)
-        }
+        onClose={() => setSidebarOpen(false)}
         activePath="/dashboard/admin/compteurs"
         onNavigate={navigate}
-        onLogout={handleLogout}
+        onLogout={deconnecter}
         user={currentUser}
       />
 
       <div className="lg:pl-72">
-
-        {/* =================================================
-            HEADER
-        ================================================= */}
-
+        {/* HEADER */}
         <Header
-          onOpenSidebar={() =>
-            setSidebarOpen(true)
-          }
-          onProfile={() =>
-            navigate(
-              '/dashboard/admin'
-            )
-          }
+          onOpenSidebar={() => setSidebarOpen(true)}
+          onProfile={() => navigate('/dashboard/admin')}
           user={currentUser}
         />
 
         <main className="p-4 sm:p-6 lg:p-8">
-
-          {/* =================================================
-              TITRE
-          ================================================= */}
-
-          <div className="mb-7 flex flex-col justify-between gap-4 md:flex-row md:items-end">
-
+          {/* TITRE */}
+          <div className="jr-entree mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end">
             <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-blue-600">
-                Administration
-              </p>
-
-              <h1 className="mt-1 text-2xl font-bold text-slate-900">
-                Gestion des compteurs
+              <h1 className="text-3xl font-semibold tracking-tight text-jr-titre sm:text-4xl">
+                Compteurs
               </h1>
 
-              <p className="mt-1 text-sm text-slate-500">
-                Gestion des compteurs d'eau et
-                d'électricité associés aux abonnés.
+              <p className="mt-1.5 max-w-xl text-sm text-jr-doux">
+                Les compteurs d’eau et d’électricité rattachés aux abonnés.
+                Un compteur inactif n’accepte plus de nouveaux relevés.
               </p>
             </div>
 
             <button
               type="button"
-              onClick={
-                openCreateModal
-              }
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+              onClick={ouvrirCreation}
+              className="jr-btn jr-btn-elec inline-flex items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-semibold shadow-sm"
             >
-              <Plus size={18} />
+              <Plus size={18} aria-hidden="true" />
               Ajouter un compteur
             </button>
-
           </div>
 
-          {/* =================================================
-              MESSAGES
-          ================================================= */}
+          {/* STATISTIQUES */}
+          <CompteursStats
+            compteurs={compteurs}
+            chargement={premierChargement}
+            type={type}
+            statut={statut}
+            onFiltreType={basculerType}
+            onFiltreStatut={basculerStatut}
+          />
 
-          {error && (
-            <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
-              {error}
-            </div>
-          )}
+          {/* RECHERCHE ET FILTRES */}
+          <CompteursFiltres
+            saisie={saisie}
+            onSaisie={setSaisie}
+            type={type}
+            onType={(valeur) => majParams({ type: valeur })}
+            statut={statut}
+            onStatut={(valeur) => majParams({ statut: valeur })}
+            abonne={abonne}
+            onAbonne={(valeur) => majParams({ abonne: valeur })}
+            abonnesOptions={abonnesOptions}
+            comptesType={comptesType}
+            comptesStatut={comptesStatut}
+            filtreActif={filtreActif}
+            onReset={resetFiltres}
+            raccourciActif={!modalOuvert && !confirmation}
+          />
 
-          {success && (
-            <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
-              {success}
-            </div>
-          )}
-
-          {/* =================================================
-              FILTRES
-          ================================================= */}
-
-          <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-
-              {/* Recherche */}
-              <div className="relative">
-
-                <Search
-                  size={18}
-                  className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"
-                />
-
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(event) =>
-                    setSearch(
-                      event.target.value
-                    )
-                  }
-                  placeholder="Rechercher un compteur..."
-                  className="w-full rounded-xl border border-slate-300 bg-slate-50 py-3 pl-10 pr-4 text-sm outline-none transition focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                />
-
-              </div>
-
-              {/* Type */}
-              <select
-                value={typeFilter}
-                onChange={(event) =>
-                  setTypeFilter(
-                    event.target.value
-                  )
-                }
-                className="rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-100"
-              >
-                <option value="">
-                  Tous les types
-                </option>
-
-                <option value="ELECTRICITE">
-                  Électricité
-                </option>
-
-                <option value="EAU">
-                  Eau
-                </option>
-              </select>
-
-              {/* Statut */}
-              <select
-                value={statusFilter}
-                onChange={(event) =>
-                  setStatusFilter(
-                    event.target.value
-                  )
-                }
-                className="rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-100"
-              >
-                <option value="">
-                  Tous les statuts
-                </option>
-
-                <option value="ACTIF">
-                  Actif
-                </option>
-
-                <option value="INACTIF">
-                  Inactif
-                </option>
-
-                <option value="A_VERIFIER">
-                  À vérifier
-                </option>
-              </select>
-
-            </div>
-          </section>
-
-          {/* =================================================
-              TABLEAU
-          ================================================= */}
-
-          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 sm:px-6">
-
+          {/* LISTE */}
+          <section className="jr-verre overflow-hidden rounded-lg border border-jr-bordure shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-jr-bordure px-5 py-3.5 sm:px-6">
               <div>
-                <h2 className="font-bold text-slate-900">
-                  Liste des compteurs
-                </h2>
+                <h2 className="font-semibold text-jr-titre">Liste des compteurs</h2>
 
-                <p className="mt-1 text-xs text-slate-500">
-                  {filteredCompteurs.length}{' '}
-                  compteur(s)
+                <p className="mt-0.5 text-xs text-jr-faible">
+                  {formatNombre(tries.length)} affiché
+                  {tries.length > 1 ? 's' : ''} sur {formatNombre(compteurs.length)}
+                  {heureMaj && ` · Mis à jour à ${heureMaj}`}
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={
-                  loadCompteurs
-                }
-                className="rounded-xl p-2.5 text-slate-500 transition hover:bg-slate-100 hover:text-blue-600"
-                title="Actualiser"
-              >
-                <RefreshCw
-                  size={18}
-                  className={
-                    loading
-                      ? 'animate-spin'
-                      : ''
-                  }
-                />
-              </button>
-
-            </div>
-
-            <div className="overflow-x-auto">
-
-              <table className="min-w-[1100px] w-full">
-
-                <thead className="bg-slate-50">
-                  <tr>
-
-                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
-                      Compteur
-                    </th>
-
-                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
-                      Type
-                    </th>
-
-                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
-                      Abonné
-                    </th>
-
-                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
-                      Installation
-                    </th>
-
-                    <th className="px-5 py-4 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
-                      Statut
-                    </th>
-
-                    <th className="px-5 py-4 text-right text-xs font-bold uppercase tracking-wide text-slate-500">
-                      Actions
-                    </th>
-
-                  </tr>
-                </thead>
-
-                <tbody className="divide-y divide-slate-100">
-
-                  {loading ? (
-                    <tr>
-                      <td
-                        colSpan="6"
-                        className="px-5 py-14 text-center text-sm text-slate-500"
-                      >
-                        Chargement des compteurs...
-                      </td>
-                    </tr>
-                  ) : filteredCompteurs.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan="6"
-                        className="px-5 py-14 text-center text-sm text-slate-500"
-                      >
-                        Aucun compteur trouvé.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredCompteurs.map(
-                      (compteur) => (
-                        <tr
-                          key={compteur.id}
-                          className="transition hover:bg-slate-50"
-                        >
-
-                          {/* Compteur */}
-                          <td className="px-5 py-4">
-
-                            <div className="flex items-center gap-3">
-
-                              <div
-                                className={`rounded-xl p-2.5 ${
-                                  compteur.type ===
-                                  'EAU'
-                                    ? 'bg-cyan-50'
-                                    : 'bg-amber-50'
-                                }`}
-                              >
-                                {compteur.type ===
-                                'EAU' ? (
-                                  <Droplets
-                                    size={19}
-                                    className="text-cyan-600"
-                                  />
-                                ) : (
-                                  <Zap
-                                    size={19}
-                                    className="text-amber-600"
-                                  />
-                                )}
-                              </div>
-
-                              <div>
-                                <p className="font-bold text-slate-800">
-                                  {
-                                    compteur.numero_compteur
-                                  }
-                                </p>
-
-                                <p className="text-xs text-slate-400">
-                                  ID #
-                                  {
-                                    compteur.id
-                                  }
-                                </p>
-                              </div>
-
-                            </div>
-
-                          </td>
-
-                          {/* Type */}
-                          <td className="px-5 py-4">
-
-                            <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700">
-                              {compteur.type ===
-                              'EAU'
-                                ? '💧 Eau'
-                                : '⚡ Électricité'}
-                            </span>
-
-                          </td>
-
-                          {/* Abonné */}
-                          <td className="px-5 py-4">
-
-                            <div className="flex items-center gap-2">
-
-                              <UserRound
-                                size={16}
-                                className="text-slate-400"
-                              />
-
-                              <div>
-                                <p className="text-sm font-semibold text-slate-700">
-                                  {compteur.abonne_prenom
-                                    ? `${compteur.abonne_prenom} ${compteur.abonne_nom}`
-                                    : compteur.abonne_nom}
-                                </p>
-
-                                <p className="text-xs text-slate-400">
-                                  {
-                                    compteur.numero_abonne
-                                  }
-                                </p>
-                              </div>
-
-                            </div>
-
-                          </td>
-
-                          {/* Date */}
-                          <td className="px-5 py-4">
-
-                            <div className="flex items-center gap-2 text-sm text-slate-600">
-
-                              <CalendarDays
-                                size={15}
-                                className="text-slate-400"
-                              />
-
-                              <span>
-                                {compteur.date_installation
-                                  ? new Date(
-                                      compteur.date_installation
-                                    ).toLocaleDateString(
-                                      'fr-FR'
-                                    )
-                                  : 'Non renseignée'}
-                              </span>
-
-                            </div>
-
-                          </td>
-
-                          {/* Statut */}
-                          <td className="px-5 py-4">
-
-                            <StatusBadge
-                              status={
-                                compteur.statut
-                              }
-                            />
-
-                          </td>
-
-                          {/* Actions */}
-                          <td className="px-5 py-4">
-
-                            <div className="flex justify-end gap-2">
-
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  openEditModal(
-                                    compteur
-                                  )
-                                }
-                                className="rounded-lg p-2 text-slate-500 transition hover:bg-blue-50 hover:text-blue-600"
-                                title="Modifier"
-                              >
-                                <Pencil
-                                  size={17}
-                                />
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  changeStatus(
-                                    compteur,
-                                    compteur.statut ===
-                                      'ACTIF'
-                                      ? 'INACTIF'
-                                      : 'ACTIF'
-                                  )
-                                }
-                                className={`rounded-lg p-2 transition ${
-                                  compteur.statut ===
-                                  'ACTIF'
-                                    ? 'text-slate-500 hover:bg-red-50 hover:text-red-600'
-                                    : 'text-emerald-600 hover:bg-emerald-50'
-                                }`}
-                                title={
-                                  compteur.statut ===
-                                  'ACTIF'
-                                    ? 'Désactiver'
-                                    : 'Activer'
-                                }
-                              >
-                                <Power
-                                  size={17}
-                                />
-                              </button>
-
-                            </div>
-
-                          </td>
-
-                        </tr>
-                      )
-                    )
-                  )}
-
-                </tbody>
-              </table>
-
-            </div>
-          </section>
-
-        </main>
-      </div>
-
-      {/* =================================================
-          MODAL
-      ================================================= */}
-
-      {modalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 p-4">
-
-          <div className="max-h-[95vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
-
-            {/* Header modal */}
-            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
-
-              <div>
-                <h2 className="text-xl font-bold text-slate-900">
-                  {editingCompteur
-                    ? 'Modifier un compteur'
-                    : 'Ajouter un compteur'}
-                </h2>
-
-                <p className="mt-1 text-xs text-slate-500">
-                  Associer un compteur à un abonné.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={
-                  closeModal
-                }
-                className="rounded-xl p-2 text-slate-500 transition hover:bg-slate-100"
-              >
-                <X size={20} />
-              </button>
-
-            </div>
-
-            {/* Formulaire */}
-            <form
-              onSubmit={
-                handleSubmit
-              }
-              className="space-y-5 p-6"
-            >
-
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-
-                {/* Numéro */}
-                <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-700">
-                    Numéro du compteur
-                  </label>
-
-                  <input
-                    type="text"
-                    name="numero_compteur"
-                    value={
-                      form.numero_compteur
-                    }
-                    onChange={
-                      handleChange
-                    }
-                    required
-                    placeholder="Ex. ELEC-0001"
-                    className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
-                  />
-                </div>
-
-                {/* Type */}
-                <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-700">
-                    Type
-                  </label>
-
-                  <select
-                    name="type"
-                    value={
-                      form.type
-                    }
-                    onChange={
-                      handleChange
-                    }
-                    required
-                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
-                  >
-                    <option value="ELECTRICITE">
-                      Électricité
-                    </option>
-
-                    <option value="EAU">
-                      Eau
-                    </option>
-                  </select>
-                </div>
-
-                {/* Date */}
-                <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-700">
-                    Date d'installation
-                  </label>
-
-                  <input
-                    type="date"
-                    name="date_installation"
-                    value={
-                      form.date_installation
-                    }
-                    onChange={
-                      handleChange
-                    }
-                    className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
-                  />
-                </div>
-
-                {/* Statut */}
-                <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-700">
-                    Statut
-                  </label>
-
-                  <select
-                    name="statut"
-                    value={
-                      form.statut
-                    }
-                    onChange={
-                      handleChange
-                    }
-                    required
-                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
-                  >
-                    <option value="ACTIF">
-                      Actif
-                    </option>
-
-                    <option value="INACTIF">
-                      Inactif
-                    </option>
-
-                    <option value="A_VERIFIER">
-                      À vérifier
-                    </option>
-                  </select>
-                </div>
-
-                {/* Abonné */}
-                <div className="sm:col-span-2">
-
-                  <label className="mb-2 block text-sm font-semibold text-slate-700">
-                    Abonné
-                  </label>
-
-                  <select
-                    name="abonne_id"
-                    value={
-                      form.abonne_id
-                    }
-                    onChange={
-                      handleChange
-                    }
-                    required
-                    disabled={
-                      loadingAbonnes
-                    }
-                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-100"
-                  >
-
-                    <option value="">
-                      {loadingAbonnes
-                        ? 'Chargement des abonnés...'
-                        : 'Sélectionner un abonné'}
-                    </option>
-
-                    {abonnes
-                      .filter(
-                        (abonne) =>
-                          abonne.statut ===
-                          'actif'
-                      )
-                      .map(
-                        (abonne) => (
-                          <option
-                            key={
-                              abonne.id
-                            }
-                            value={
-                              abonne.id
-                            }
-                          >
-                            {abonne.numero_abonne}
-                            {' - '}
-                            {abonne.prenom
-                              ? `${abonne.prenom} ${abonne.nom}`
-                              : abonne.nom}
-                          </option>
-                        )
-                      )}
-
-                  </select>
-
-                  <p className="mt-1 text-xs text-slate-400">
-                    Seuls les abonnés actifs peuvent recevoir un compteur.
-                  </p>
-
-                </div>
-
-              </div>
-
-              {/* Erreur */}
-              {error && (
-                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {error}
-                </div>
-              )}
-
-              {/* Boutons */}
-              <div className="flex justify-end gap-3 border-t border-slate-200 pt-5">
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={exporterCsv}
+                  disabled={tries.length === 0}
+                  title="Exporter la liste affichée en CSV"
+                  className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm font-medium text-jr-doux transition-colors hover:bg-[var(--jr-eau-pale)] hover:text-jr-lien disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none"
+                >
+                  <Download size={16} aria-hidden="true" />
+                  <span className="hidden sm:inline">CSV</span>
+                  <span className="sr-only sm:hidden">Exporter en CSV</span>
+                </button>
 
                 <button
                   type="button"
-                  onClick={
-                    closeModal
-                  }
-                  disabled={
-                    saving
-                  }
-                  className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                  onClick={exporterPdf}
+                  disabled={tries.length === 0}
+                  title="Exporter la liste affichée en PDF"
+                  className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm font-medium text-jr-doux transition-colors hover:bg-[var(--jr-eau-pale)] hover:text-jr-lien disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none"
                 >
-                  Annuler
+                  <FileText size={16} aria-hidden="true" />
+                  <span className="hidden sm:inline">PDF</span>
+                  <span className="sr-only sm:hidden">Exporter en PDF</span>
                 </button>
 
                 <button
-                  type="submit"
-                  disabled={
-                    saving ||
-                    loadingAbonnes
-                  }
-                  className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  type="button"
+                  onClick={() => chargerCompteurs()}
+                  className="rounded-md p-2.5 text-jr-faible transition-colors hover:bg-[var(--jr-eau-pale)] hover:text-jr-lien motion-reduce:transition-none"
+                  title="Actualiser la liste"
+                  aria-label="Actualiser la liste"
                 >
-                  {saving ? (
-                    <RefreshCw
-                      size={17}
-                      className="animate-spin"
-                    />
-                  ) : (
-                    <Save
-                      size={17}
-                    />
-                  )}
-
-                  {saving
-                    ? 'Enregistrement...'
-                    : editingCompteur
-                    ? 'Enregistrer'
-                    : 'Créer le compteur'}
+                  <RefreshCw
+                    size={18}
+                    aria-hidden="true"
+                    className={actualisation ? 'animate-spin motion-reduce:animate-none' : ''}
+                  />
                 </button>
-
               </div>
+            </div>
 
-            </form>
+            {/* Annonce vocale du nombre de résultats */}
+            <p className="sr-only" role="status" aria-live="polite">
+              {formatNombre(tries.length)} compteur{tries.length > 1 ? 's' : ''} affiché
+              {tries.length > 1 ? 's' : ''}
+            </p>
 
-          </div>
-        </div>
+            <CompteursTable
+              elements={elements}
+              totalFiltre={tries.length}
+              totalTous={compteurs.length}
+              premierChargement={premierChargement}
+              erreurChargement={erreurChargement}
+              onRecharger={() => chargerCompteurs()}
+              tri={tri}
+              dir={dir}
+              onTrier={changerTri}
+              onTriMobile={changerTriMobile}
+              onModifier={ouvrirEdition}
+              onChangerStatut={demanderStatut}
+              surligneId={surligneId}
+              page={pageCourante}
+              nbPages={nbPages}
+              taillePage={taillePage}
+              debut={debut}
+              onPage={(numero) => setPage(Math.min(Math.max(numero, 1), nbPages))}
+              onTaillePage={setTaillePage}
+              onAjouter={ouvrirCreation}
+              onReset={resetFiltres}
+            />
+          </section>
+        </main>
+      </div>
+
+      {/* ==================================================
+          TOASTS (en bas à droite)
+      ================================================== */}
+      <div className="pointer-events-none fixed bottom-4 right-4 z-[120] flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2">
+        {toasts.map((toast) => {
+          const erreur = toast.genre === 'erreur';
+          const Icone = erreur ? CircleAlert : CircleCheck;
+
+          return (
+            <div
+              key={toast.id}
+              role={erreur ? 'alert' : 'status'}
+              className="jr-toast jr-verre-fort pointer-events-auto flex items-start gap-3 rounded-md border border-jr-bordure py-3 pl-3 pr-2 shadow-lg"
+              style={{
+                borderLeft: `4px solid ${erreur ? 'var(--jr-err)' : 'var(--jr-ok)'}`,
+              }}
+            >
+              <Icone
+                size={18}
+                aria-hidden="true"
+                className={`mt-0.5 shrink-0 ${erreur ? 'text-jr-err' : 'text-jr-ok'}`}
+              />
+
+              <p className="flex-1 text-sm font-medium text-jr-texte">
+                {toast.message}
+              </p>
+
+              <button
+                type="button"
+                onClick={() => fermerToast(toast.id)}
+                aria-label="Fermer le message"
+                className="rounded p-1 text-jr-faible hover:text-jr-texte"
+              >
+                <X size={16} aria-hidden="true" />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ==================================================
+          MODAL AJOUT / MODIFICATION
+      ================================================== */}
+      {modalOuvert && (
+        <CompteurModal
+          key={compteurEnEdition?.id ?? 'nouveau'}
+          compteur={compteurEnEdition}
+          compteurs={compteurs}
+          abonnes={abonnes}
+          chargementAbonnes={loadingAbonnes}
+          erreurAbonnes={erreurAbonnes}
+          onRelancerAbonnes={chargerAbonnes}
+          enregistrement={saving}
+          erreurServeur={erreurModal}
+          cleErreur={cleErreur}
+          onFermer={fermerModal}
+          onEnregistrer={enregistrer}
+        />
       )}
-    </div>
-  );
-}
 
-// ======================================================
-// BADGE STATUT
-// ======================================================
-
-function StatusBadge({
-  status,
-}) {
-  const config = {
-    ACTIF: {
-      label: 'Actif',
-      className:
-        'bg-emerald-50 text-emerald-700',
-    },
-
-    INACTIF: {
-      label: 'Inactif',
-      className:
-        'bg-slate-100 text-slate-500',
-    },
-
-    A_VERIFIER: {
-      label: 'À vérifier',
-      className:
-        'bg-amber-50 text-amber-700',
-    },
-  };
-
-  const current =
-    config[status] ||
-    config.ACTIF;
-
-  return (
-    <span
-      className={`inline-flex rounded-full px-3 py-1.5 text-xs font-semibold ${current.className}`}
-    >
-      {current.label}
-    </span>
+      {/* ==================================================
+          CONFIRMATION DE CHANGEMENT DE STATUT
+      ================================================== */}
+      {confirmation && (
+        <ConfirmStatutDialog
+          compteur={confirmation.compteur}
+          statut={confirmation.statut}
+          onConfirmer={confirmerStatut}
+          onAnnuler={() => setConfirmation(null)}
+        />
+      )}
+    </AdminShell>
   );
 }
 

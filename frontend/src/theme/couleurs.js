@@ -23,7 +23,16 @@ export const COULEURS = {
   // Texte et liens (s'éclaircissent en mode sombre)
   texte: 'var(--jr-texte)',
   texteDoux: 'var(--jr-texte-doux)',
+  texteFaible: 'var(--jr-texte-faible)',
   titre: 'var(--jr-titre)',
   lien: 'var(--jr-lien)',
   attention: 'var(--jr-attention)',
+
+  // Surfaces et bordures
+  surface: 'var(--jr-surface)',
+  bordure: 'var(--jr-bordure)',
+
+  // Rouge = erreur / anomalie, vert = succès
+  err: 'var(--jr-err)',
+  ok: 'var(--jr-ok)',
 };

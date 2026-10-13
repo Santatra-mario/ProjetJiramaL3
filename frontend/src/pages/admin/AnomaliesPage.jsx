@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -35,6 +36,8 @@ import axiosClient from '../../api/axiosClient.js';
 import Sidebar from '../../components/admin/Sidebar.jsx';
 
 import Header from '../../components/admin/Header.jsx';
+
+import AdminShell from '../../components/admin/AdminShell.jsx';
 
 
 /* =========================================================
@@ -204,7 +207,7 @@ function getNiveauClasses(
     niveau === 'CRITIQUE'
   ) {
     return (
-      'border-red-200 bg-red-50 text-red-700'
+      'border-[var(--jr-err-bordure)] bg-[var(--jr-err-pale)] text-jr-err'
     );
   }
 
@@ -212,12 +215,12 @@ function getNiveauClasses(
     niveau === 'SUSPECTE'
   ) {
     return (
-      'border-orange-200 bg-orange-50 text-orange-700'
+      'border-[var(--jr-elec)] bg-[var(--jr-elec-pale)] text-jr-attention'
     );
   }
 
   return (
-    'border-amber-200 bg-amber-50 text-amber-700'
+    'border-[var(--jr-elec-anneau)] bg-[var(--jr-elec-pale)] text-jr-attention'
   );
 }
 
@@ -247,7 +250,7 @@ function getStatutClasses(
     statut === 'NOUVELLE'
   ) {
     return (
-      'border-red-200 bg-red-50 text-red-700'
+      'border-[var(--jr-err-bordure)] bg-[var(--jr-err-pale)] text-jr-err'
     );
   }
 
@@ -255,7 +258,7 @@ function getStatutClasses(
     statut === 'EN_COURS'
   ) {
     return (
-      'border-blue-200 bg-blue-50 text-blue-700'
+      'border-[var(--jr-eau-clair)] bg-[var(--jr-eau-pale)] text-jr-lien'
     );
   }
 
@@ -263,12 +266,12 @@ function getStatutClasses(
     statut === 'VERIFIEE'
   ) {
     return (
-      'border-violet-200 bg-violet-50 text-violet-700'
+      'border-[var(--jr-bordure-forte)] bg-jr-champ text-jr-doux'
     );
   }
 
   return (
-    'border-emerald-200 bg-emerald-50 text-emerald-700'
+    'border-[var(--jr-ok)] bg-[var(--jr-ok-pale)] text-jr-ok'
   );
 }
 
@@ -282,8 +285,7 @@ function Badge({
   className,
 }) {
   return (
-    <span
-      className={`
+    <span className={`
         inline-flex
         rounded-full
         border
@@ -313,62 +315,26 @@ function KpiCard({
   iconColor,
 }) {
   return (
-    <div
-      className="
-        rounded-2xl
-        border
-        border-slate-200
-        bg-white
-        p-5
-        shadow-sm
-      "
-    >
-      <div
-        className="
-          flex
-          items-start
-          justify-between
-          gap-4
-        "
-      >
+    <div className="rounded-lg border border-jr-bordure jr-verre p-5 shadow-sm">
+      <div className="flex items-start justify-between gap-4">
         <div>
-          <p
-            className="
-              text-sm
-              font-medium
-              text-slate-500
-            "
-          >
+          <p className="text-sm font-medium text-jr-faible">
             {title}
           </p>
 
-          <p
-            className="
-              mt-2
-              text-3xl
-              font-bold
-              text-slate-900
-            "
-          >
+          <p className="mt-2 text-3xl font-bold text-jr-texte">
             {formatNumber(
               value
             )}
           </p>
 
-          <p
-            className="
-              mt-2
-              text-xs
-              text-slate-500
-            "
-          >
+          <p className="mt-2 text-xs text-jr-faible">
             {subtitle}
           </p>
         </div>
 
-        <div
-          className={`
-            rounded-2xl
+        <div className={`
+            rounded-lg
             p-3
             ${iconBg}
           `}
@@ -381,6 +347,114 @@ function KpiCard({
           />
         </div>
       </div>
+    </div>
+  );
+}
+
+
+/* =========================================================
+   TOAST (message temporaire)
+   - glisse depuis la droite (jr-toast), icône qui « pop »
+   - se ferme seul, avec une barre de progression
+   - le temps se met en pause au survol ou au focus clavier
+========================================================= */
+
+function Toast({
+  genre,
+  titre,
+  message,
+  duree = 6000,
+  onClose,
+}) {
+  const erreur = genre === 'erreur';
+  const Icone = erreur ? AlertCircle : CheckCircle2;
+  const couleur = erreur ? 'var(--jr-err)' : 'var(--jr-ok)';
+
+  const [pause, setPause] = useState(false);
+  const reste = useRef(duree);
+  const debut = useRef(0);
+  const fermer = useRef(onClose);
+
+  fermer.current = onClose;
+
+  useEffect(() => {
+    if (pause) {
+      return undefined;
+    }
+
+    debut.current = Date.now();
+
+    const minuteur = setTimeout(() => {
+      fermer.current?.();
+    }, reste.current);
+
+    return () => {
+      clearTimeout(minuteur);
+
+      reste.current = Math.max(
+        0,
+        reste.current - (Date.now() - debut.current)
+      );
+    };
+  }, [pause]);
+
+  return (
+    <div
+      role={erreur ? 'alert' : 'status'}
+      aria-live={erreur ? 'assertive' : 'polite'}
+      onMouseEnter={() => setPause(true)}
+      onMouseLeave={() => setPause(false)}
+      onFocus={() => setPause(true)}
+      onBlur={() => setPause(false)}
+      className="jr-toast jr-verre-fort pointer-events-auto relative overflow-hidden rounded-md border border-jr-bordure py-3 pl-3 pr-2 shadow-lg"
+      style={{ borderLeft: `4px solid ${couleur}` }}
+    >
+      <div className="flex items-start gap-3">
+        <span
+          className={`jr-pop mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+            erreur
+              ? 'bg-[var(--jr-err-pale)] text-jr-err'
+              : 'bg-[var(--jr-ok-pale)] text-jr-ok'
+          }`}
+        >
+          <Icone
+            size={18}
+            aria-hidden="true"
+          />
+        </span>
+
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-jr-titre">
+            {titre}
+          </p>
+
+          <p className="mt-0.5 break-words text-sm text-jr-doux">
+            {message}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => onClose?.()}
+          aria-label="Fermer le message"
+          className="rounded p-1 text-jr-faible transition-colors hover:bg-[var(--jr-eau-pale)] hover:text-jr-texte motion-reduce:transition-none"
+        >
+          <X
+            size={16}
+            aria-hidden="true"
+          />
+        </button>
+      </div>
+
+      <span
+        aria-hidden="true"
+        className="jr-progression absolute bottom-0 left-0 h-0.5"
+        style={{
+          backgroundColor: couleur,
+          animationDuration: `${duree}ms`,
+          animationPlayState: pause ? 'paused' : 'running',
+        }}
+      />
     </div>
   );
 }
@@ -1082,40 +1156,16 @@ function AnomaliesPage() {
 
   if (!user) {
     return (
-      <div
-        className="
-          flex
-          min-h-screen
-          items-center
-          justify-center
-          bg-slate-100
-        "
-      >
-        <div
-          className="
-            flex
-            items-center
-            gap-3
-            rounded-xl
-            bg-white
-            px-6
-            py-5
-            text-sm
-            text-slate-500
-            shadow-sm
-          "
-        >
+      <AdminShell intensite="calme"><div className="flex min-h-screen items-center justify-center p-4">
+        <div className="jr-verre flex items-center gap-3 rounded-lg border border-jr-bordure px-6 py-5 text-sm text-jr-doux shadow-sm">
           <Loader2
             size={18}
-            className="
-              animate-spin
-              text-blue-600
-            "
+            className="animate-spin text-jr-lien"
           />
 
           Chargement du module des anomalies...
         </div>
-      </div>
+      </div></AdminShell>
     );
   }
 
@@ -1125,12 +1175,7 @@ function AnomaliesPage() {
   ======================================================= */
 
   return (
-    <div
-      className="
-        min-h-screen
-        bg-slate-100
-      "
-    >
+    <AdminShell intensite="calme" className="selection:bg-[var(--jr-elec)] selection:text-[var(--jr-sur-elec)]">
       <Sidebar
         isOpen={
           sidebarOpen
@@ -1142,9 +1187,7 @@ function AnomaliesPage() {
           )
         }
 
-        activePath="
-          /dashboard/admin/anomalies
-        "
+        activePath="/dashboard/admin/anomalies"
 
         onNavigate={
           navigate
@@ -1159,11 +1202,7 @@ function AnomaliesPage() {
         }
       />
 
-      <div
-        className="
-          lg:pl-72
-        "
-      >
+      <div className="lg:pl-72">
         <Header
           onOpenSidebar={() =>
             setSidebarOpen(
@@ -1182,39 +1221,15 @@ function AnomaliesPage() {
           }
         />
 
-        <main
-          className="
-            p-4
-            sm:p-6
-            lg:p-8
-          "
-        >
+        <main className="p-4 sm:p-6 lg:p-8">
 
           {/* =================================================
               EN-TÊTE
           ================================================= */}
 
-          <div
-            className="
-              mb-7
-              flex
-              flex-col
-              justify-between
-              gap-4
-              xl:flex-row
-              xl:items-end
-            "
-          >
+          <div className="jr-entree mb-7 flex flex-col justify-between gap-4 xl:flex-row xl:items-end">
             <div>
-              <div
-                className="
-                  flex
-                  items-center
-                  gap-2
-                  text-sm
-                  text-slate-500
-                "
-              >
+              <div className="flex items-center gap-2 text-sm text-jr-faible">
                 <button
                   type="button"
                   onClick={() =>
@@ -1222,15 +1237,7 @@ function AnomaliesPage() {
                       '/dashboard/admin'
                     )
                   }
-                  className="
-                    inline-flex
-                    items-center
-                    gap-1
-                    font-medium
-                    text-blue-600
-                    hover:text-blue-700
-                  "
-                >
+                  className="inline-flex items-center gap-1 font-medium text-jr-lien hover:text-jr-lien">
                   <ArrowLeft
                     size={15}
                   />
@@ -1247,39 +1254,18 @@ function AnomaliesPage() {
                 </span>
               </div>
 
-              <h1
-                className="
-                  mt-2
-                  text-2xl
-                  font-bold
-                  text-slate-900
-                  sm:text-3xl
-                "
-              >
+              <h1 className="mt-2 text-3xl font-semibold tracking-tight text-jr-titre sm:text-4xl">
                 Détection et suivi des anomalies
               </h1>
 
-              <p
-                className="
-                  mt-1
-                  max-w-3xl
-                  text-sm
-                  text-slate-500
-                "
-              >
+              <p className="mt-1.5 max-w-xl text-sm text-jr-doux">
                 Analyse automatique des consommations
                 d’eau et d’électricité à partir des relevés
                 réels.
               </p>
             </div>
 
-            <div
-              className="
-                flex
-                flex-wrap
-                gap-2
-              "
-            >
+            <div className="flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() =>
@@ -1292,25 +1278,7 @@ function AnomaliesPage() {
                   loading ||
                   analysing
                 }
-                className="
-                  inline-flex
-                  items-center
-                  gap-2
-                  rounded-xl
-                  border
-                  border-slate-200
-                  bg-white
-                  px-4
-                  py-2.5
-                  text-sm
-                  font-semibold
-                  text-slate-700
-                  shadow-sm
-                  hover:bg-slate-50
-                  disabled:cursor-not-allowed
-                  disabled:opacity-60
-                "
-              >
+                className="inline-flex items-center gap-2 rounded-md border border-jr-bordure jr-verre px-4 py-2.5 text-sm font-semibold text-jr-doux shadow-sm hover:bg-[var(--jr-eau-pale)] disabled:cursor-not-allowed disabled:opacity-60">
                 <RefreshCw
                   size={17}
                   className={
@@ -1331,29 +1299,11 @@ function AnomaliesPage() {
                 disabled={
                   analysing
                 }
-                className="
-                  inline-flex
-                  items-center
-                  gap-2
-                  rounded-xl
-                  bg-blue-600
-                  px-4
-                  py-2.5
-                  text-sm
-                  font-semibold
-                  text-white
-                  shadow-sm
-                  hover:bg-blue-700
-                  disabled:cursor-not-allowed
-                  disabled:opacity-60
-                "
-              >
+                className="inline-flex items-center gap-2 rounded-md jr-btn jr-btn-elec px-4 py-2.5 text-sm font-semibold shadow-sm disabled:cursor-not-allowed disabled:opacity-60">
                 {analysing ? (
                   <Loader2
                     size={17}
-                    className="
-                      animate-spin
-                    "
+                    className="animate-spin"
                   />
                 ) : (
                   <AlertTriangle
@@ -1369,112 +1319,14 @@ function AnomaliesPage() {
           </div>
 
 
-          {/* =================================================
-              MESSAGES
-          ================================================= */}
-
-          {error && (
-            <div
-              className="
-                mb-5
-                flex
-                items-start
-                gap-3
-                rounded-2xl
-                border
-                border-red-200
-                bg-red-50
-                p-4
-                text-sm
-                text-red-700
-              "
-            >
-              <AlertCircle
-                size={19}
-                className="
-                  mt-0.5
-                  shrink-0
-                "
-              />
-
-              <div>
-                <p
-                  className="
-                    font-semibold
-                  "
-                >
-                  Erreur
-                </p>
-
-                <p
-                  className="
-                    mt-0.5
-                  "
-                >
-                  {error}
-                </p>
-              </div>
-            </div>
-          )}
-
-          {success && (
-            <div
-              className="
-                mb-5
-                flex
-                items-start
-                gap-3
-                rounded-2xl
-                border
-                border-emerald-200
-                bg-emerald-50
-                p-4
-                text-sm
-                text-emerald-700
-              "
-            >
-              <CheckCircle2
-                size={19}
-                className="
-                  mt-0.5
-                  shrink-0
-                "
-              />
-
-              <div>
-                <p
-                  className="
-                    font-semibold
-                  "
-                >
-                  Analyse terminée
-                </p>
-
-                <p
-                  className="
-                    mt-0.5
-                  "
-                >
-                  {success}
-                </p>
-              </div>
-            </div>
-          )}
+          {/* Les messages d’erreur et de succès s’affichent en toasts (voir la fin de la page) */}
 
 
-          {/* =================================================
+{/* =================================================
               KPI
           ================================================= */}
 
-          <div
-            className="
-              grid
-              grid-cols-1
-              gap-4
-              sm:grid-cols-2
-              xl:grid-cols-4
-            "
-          >
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <KpiCard
               title="Total anomalies"
               value={
@@ -1487,10 +1339,10 @@ function AnomaliesPage() {
                 AlertTriangle
               }
               iconBg="
-                bg-red-50
+                bg-[var(--jr-err-pale)]
               "
               iconColor="
-                text-red-600
+                text-jr-err
               "
             />
 
@@ -1507,10 +1359,10 @@ function AnomaliesPage() {
                 AlertCircle
               }
               iconBg="
-                bg-red-50
+                bg-[var(--jr-err-pale)]
               "
               iconColor="
-                text-red-600
+                text-jr-err
               "
             />
 
@@ -1527,10 +1379,10 @@ function AnomaliesPage() {
                 Clock3
               }
               iconBg="
-                bg-blue-50
+                bg-[var(--jr-eau-pale)]
               "
               iconColor="
-                text-blue-600
+                text-jr-lien
               "
             />
 
@@ -1547,10 +1399,10 @@ function AnomaliesPage() {
                 CheckCircle2
               }
               iconBg="
-                bg-emerald-50
+                bg-[var(--jr-ok-pale)]
               "
               iconColor="
-                text-emerald-600
+                text-jr-ok
               "
             />
           </div>
@@ -1560,74 +1412,27 @@ function AnomaliesPage() {
               RÉPARTITION RAPIDE
           ================================================= */}
 
-          <div
-            className="
-              mt-5
-              grid
-              grid-cols-1
-              gap-4
-              md:grid-cols-3
-            "
-          >
-            <div
-              className="
-                rounded-2xl
-                border
-                border-slate-200
-                bg-white
-                p-5
-                shadow-sm
-              "
-            >
-              <div
-                className="
-                  flex
-                  items-center
-                  gap-3
-                "
-              >
-                <div
-                  className="
-                    rounded-xl
-                    bg-cyan-50
-                    p-2.5
-                  "
-                >
+          <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className="jr-carte-eau rounded-lg p-5 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="rounded-md bg-[var(--jr-eau-pale)] p-2.5">
                   <Droplets
                     size={19}
-                    className="
-                      text-cyan-600
-                    "
+                    className="text-jr-lien"
                   />
                 </div>
 
                 <div>
-                  <p
-                    className="
-                      font-semibold
-                      text-slate-800
-                    "
-                  >
+                  <p className="font-semibold text-jr-texte">
                     Eau
                   </p>
 
-                  <p
-                    className="
-                      text-xs
-                      text-slate-500
-                    "
-                  >
+                  <p className="text-xs text-jr-faible">
                     Anomalies
                   </p>
                 </div>
 
-                <strong
-                  className="
-                    ml-auto
-                    text-2xl
-                    text-slate-900
-                  "
-                >
+                <strong className="ml-auto text-2xl text-jr-texte">
                   {formatNumber(
                     stats.parType
                       .EAU
@@ -1636,65 +1441,26 @@ function AnomaliesPage() {
               </div>
             </div>
 
-            <div
-              className="
-                rounded-2xl
-                border
-                border-slate-200
-                bg-white
-                p-5
-                shadow-sm
-              "
-            >
-              <div
-                className="
-                  flex
-                  items-center
-                  gap-3
-                "
-              >
-                <div
-                  className="
-                    rounded-xl
-                    bg-amber-50
-                    p-2.5
-                  "
-                >
+            <div className="jr-carte-elec rounded-lg p-5 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="rounded-md bg-[var(--jr-elec-pale)] p-2.5">
                   <Zap
                     size={19}
-                    className="
-                      text-amber-600
-                    "
+                    className="text-jr-elec"
                   />
                 </div>
 
                 <div>
-                  <p
-                    className="
-                      font-semibold
-                      text-slate-800
-                    "
-                  >
+                  <p className="font-semibold text-jr-texte">
                     Électricité
                   </p>
 
-                  <p
-                    className="
-                      text-xs
-                      text-slate-500
-                    "
-                  >
+                  <p className="text-xs text-jr-faible">
                     Anomalies
                   </p>
                 </div>
 
-                <strong
-                  className="
-                    ml-auto
-                    text-2xl
-                    text-slate-900
-                  "
-                >
+                <strong className="ml-auto text-2xl text-jr-texte">
                   {formatNumber(
                     stats.parType
                       .ELECTRICITE
@@ -1703,65 +1469,26 @@ function AnomaliesPage() {
               </div>
             </div>
 
-            <div
-              className="
-                rounded-2xl
-                border
-                border-slate-200
-                bg-white
-                p-5
-                shadow-sm
-              "
-            >
-              <div
-                className="
-                  flex
-                  items-center
-                  gap-3
-                "
-              >
-                <div
-                  className="
-                    rounded-xl
-                    bg-slate-100
-                    p-2.5
-                  "
-                >
+            <div className="rounded-lg border border-jr-bordure jr-verre p-5 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="rounded-md bg-jr-bordure p-2.5">
                   <Filter
                     size={19}
-                    className="
-                      text-slate-600
-                    "
+                    className="text-jr-doux"
                   />
                 </div>
 
                 <div>
-                  <p
-                    className="
-                      font-semibold
-                      text-slate-800
-                    "
-                  >
+                  <p className="font-semibold text-jr-texte">
                     Résultats
                   </p>
 
-                  <p
-                    className="
-                      text-xs
-                      text-slate-500
-                    "
-                  >
+                  <p className="text-xs text-jr-faible">
                     Après filtrage
                   </p>
                 </div>
 
-                <strong
-                  className="
-                    ml-auto
-                    text-2xl
-                    text-slate-900
-                  "
-                >
+                <strong className="ml-auto text-2xl text-jr-texte">
                   {formatNumber(
                     summary.total
                   )}
@@ -1775,80 +1502,28 @@ function AnomaliesPage() {
               FILTRES
           ================================================= */}
 
-          <section
-            className="
-              mt-6
-              rounded-2xl
-              border
-              border-slate-200
-              bg-white
-              p-5
-              shadow-sm
-            "
-          >
-            <div
-              className="
-                mb-4
-                flex
-                items-center
-                gap-2
-              "
-            >
+          <section className="mt-6 rounded-lg border border-jr-bordure jr-verre p-5 shadow-sm">
+            <div className="mb-4 flex items-center gap-2">
               <Filter
                 size={18}
-                className="
-                  text-blue-600
-                "
+                className="text-jr-lien"
               />
 
-              <h2
-                className="
-                  font-bold
-                  text-slate-900
-                "
-              >
+              <h2 className="font-bold text-jr-titre">
                 Filtres d’analyse
               </h2>
             </div>
 
-            <div
-              className="
-                grid
-                grid-cols-1
-                gap-4
-                sm:grid-cols-2
-                lg:grid-cols-3
-                xl:grid-cols-6
-              "
-            >
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
               <label>
-                <span
-                  className="
-                    mb-2
-                    block
-                    text-xs
-                    font-semibold
-                    text-slate-600
-                  "
-                >
+                <span className="mb-2 block text-xs font-semibold text-jr-doux">
                   Date début
                 </span>
 
-                <div
-                  className="
-                    relative
-                  "
-                >
+                <div className="relative">
                   <CalendarDays
                     size={16}
-                    className="
-                      pointer-events-none
-                      absolute
-                      left-3
-                      top-1/2
-                      -translate-y-1/2
-                      text-slate-400
-                    "
+                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-jr-faible"
                   />
 
                   <input
@@ -1863,55 +1538,21 @@ function AnomaliesPage() {
                         event.target.value
                       )
                     }
-                    className="
-                      w-full
-                      rounded-xl
-                      border
-                      border-slate-200
-                      bg-slate-50
-                      px-3
-                      py-2.5
-                      pl-10
-                      text-sm
-                      outline-none
-                      focus:border-blue-500
-                      focus:bg-white
-                      focus:ring-2
-                      focus:ring-blue-100
-                    "
+                    className="w-full rounded-md border px-3 py-2.5 pl-10 text-sm outline-none jr-field"
                   />
                 </div>
               </label>
 
 
               <label>
-                <span
-                  className="
-                    mb-2
-                    block
-                    text-xs
-                    font-semibold
-                    text-slate-600
-                  "
-                >
+                <span className="mb-2 block text-xs font-semibold text-jr-doux">
                   Date fin
                 </span>
 
-                <div
-                  className="
-                    relative
-                  "
-                >
+                <div className="relative">
                   <CalendarDays
                     size={16}
-                    className="
-                      pointer-events-none
-                      absolute
-                      left-3
-                      top-1/2
-                      -translate-y-1/2
-                      text-slate-400
-                    "
+                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-jr-faible"
                   />
 
                   <input
@@ -1926,37 +1567,14 @@ function AnomaliesPage() {
                         event.target.value
                       )
                     }
-                    className="
-                      w-full
-                      rounded-xl
-                      border
-                      border-slate-200
-                      bg-slate-50
-                      px-3
-                      py-2.5
-                      pl-10
-                      text-sm
-                      outline-none
-                      focus:border-blue-500
-                      focus:bg-white
-                      focus:ring-2
-                      focus:ring-blue-100
-                    "
+                    className="w-full rounded-md border px-3 py-2.5 pl-10 text-sm outline-none jr-field"
                   />
                 </div>
               </label>
 
 
               <label>
-                <span
-                  className="
-                    mb-2
-                    block
-                    text-xs
-                    font-semibold
-                    text-slate-600
-                  "
-                >
+                <span className="mb-2 block text-xs font-semibold text-jr-doux">
                   Type
                 </span>
 
@@ -1971,22 +1589,7 @@ function AnomaliesPage() {
                       event.target.value
                     )
                   }
-                  className="
-                    w-full
-                    rounded-xl
-                    border
-                    border-slate-200
-                    bg-slate-50
-                    px-3
-                    py-2.5
-                    text-sm
-                    outline-none
-                    focus:border-blue-500
-                    focus:bg-white
-                    focus:ring-2
-                    focus:ring-blue-100
-                  "
-                >
+                  className="w-full rounded-md border px-3 py-2.5 text-sm outline-none jr-field">
                   <option value="">
                     Tous les types
                   </option>
@@ -2003,15 +1606,7 @@ function AnomaliesPage() {
 
 
               <label>
-                <span
-                  className="
-                    mb-2
-                    block
-                    text-xs
-                    font-semibold
-                    text-slate-600
-                  "
-                >
+                <span className="mb-2 block text-xs font-semibold text-jr-doux">
                   Niveau
                 </span>
 
@@ -2026,22 +1621,7 @@ function AnomaliesPage() {
                       event.target.value
                     )
                   }
-                  className="
-                    w-full
-                    rounded-xl
-                    border
-                    border-slate-200
-                    bg-slate-50
-                    px-3
-                    py-2.5
-                    text-sm
-                    outline-none
-                    focus:border-blue-500
-                    focus:bg-white
-                    focus:ring-2
-                    focus:ring-blue-100
-                  "
-                >
+                  className="w-full rounded-md border px-3 py-2.5 text-sm outline-none jr-field">
                   <option value="">
                     Tous les niveaux
                   </option>
@@ -2062,15 +1642,7 @@ function AnomaliesPage() {
 
 
               <label>
-                <span
-                  className="
-                    mb-2
-                    block
-                    text-xs
-                    font-semibold
-                    text-slate-600
-                  "
-                >
+                <span className="mb-2 block text-xs font-semibold text-jr-doux">
                   Statut
                 </span>
 
@@ -2085,22 +1657,7 @@ function AnomaliesPage() {
                       event.target.value
                     )
                   }
-                  className="
-                    w-full
-                    rounded-xl
-                    border
-                    border-slate-200
-                    bg-slate-50
-                    px-3
-                    py-2.5
-                    text-sm
-                    outline-none
-                    focus:border-blue-500
-                    focus:bg-white
-                    focus:ring-2
-                    focus:ring-blue-100
-                  "
-                >
+                  className="w-full rounded-md border px-3 py-2.5 text-sm outline-none jr-field">
                   <option value="">
                     Tous les statuts
                   </option>
@@ -2125,33 +1682,14 @@ function AnomaliesPage() {
 
 
               <label>
-                <span
-                  className="
-                    mb-2
-                    block
-                    text-xs
-                    font-semibold
-                    text-slate-600
-                  "
-                >
+                <span className="mb-2 block text-xs font-semibold text-jr-doux">
                   Recherche
                 </span>
 
-                <div
-                  className="
-                    relative
-                  "
-                >
+                <div className="relative">
                   <Search
                     size={16}
-                    className="
-                      pointer-events-none
-                      absolute
-                      left-3
-                      top-1/2
-                      -translate-y-1/2
-                      text-slate-400
-                    "
+                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-jr-faible"
                   />
 
                   <input
@@ -2179,22 +1717,7 @@ function AnomaliesPage() {
                     placeholder="
                       Compteur ou abonné...
                     "
-                    className="
-                      w-full
-                      rounded-xl
-                      border
-                      border-slate-200
-                      bg-slate-50
-                      px-3
-                      py-2.5
-                      pl-10
-                      text-sm
-                      outline-none
-                      focus:border-blue-500
-                      focus:bg-white
-                      focus:ring-2
-                      focus:ring-blue-100
-                    "
+                    className="w-full rounded-md border px-3 py-2.5 pl-10 text-sm outline-none jr-field"
                   />
                 </div>
               </label>
@@ -2206,19 +1729,7 @@ function AnomaliesPage() {
               RÉSUMÉ FILTRAGE
           ================================================= */}
 
-          <div
-            className="
-              mt-4
-              flex
-              flex-col
-              gap-2
-              text-xs
-              text-slate-500
-              sm:flex-row
-              sm:items-center
-              sm:justify-between
-            "
-          >
+          <div className="mt-4 flex flex-col gap-2 text-xs text-jr-faible sm:flex-row sm:items-center sm:justify-between">
             <p>
               {summary.total} anomalie(s)
               affichée(s) ·{' '}
@@ -2240,86 +1751,29 @@ function AnomaliesPage() {
               TABLEAU
           ================================================= */}
 
-          <section
-            className="
-              mt-3
-              overflow-hidden
-              rounded-2xl
-              border
-              border-slate-200
-              bg-white
-              shadow-sm
-            "
-          >
+          <section className="mt-3 overflow-hidden rounded-lg border border-jr-bordure jr-verre shadow-sm">
             {loading ? (
-              <div
-                className="
-                  flex
-                  min-h-[320px]
-                  items-center
-                  justify-center
-                  gap-3
-                  text-sm
-                  text-slate-500
-                "
-              >
-                <Loader2
-                  size={20}
-                  className="
-                    animate-spin
-                    text-blue-600
-                  "
-                />
-
-                Chargement des anomalies...
-              </div>
-            ) : anomalies.length ===
+<div role="status" aria-live="polite" className="space-y-3 p-5">
+{Array.from({ length: 6 }).map((_, index) => (
+<div key={index} className="jr-shimmer h-12 rounded-md" />
+))}
+<span className="sr-only">Chargement des anomalies...</span>
+</div>
+) : anomalies.length ===
               0 ? (
-              <div
-                className="
-                  flex
-                  min-h-[320px]
-                  flex-col
-                  items-center
-                  justify-center
-                  px-6
-                  text-center
-                "
-              >
-                <div
-                  className="
-                    rounded-2xl
-                    bg-emerald-50
-                    p-4
-                  "
-                >
+              <div className="flex min-h-[320px] flex-col items-center justify-center px-6 text-center">
+                <div className="rounded-lg bg-[var(--jr-ok-pale)] p-4">
                   <CheckCircle2
                     size={34}
-                    className="
-                      text-emerald-600
-                    "
+                    className="text-jr-ok"
                   />
                 </div>
 
-                <h3
-                  className="
-                    mt-4
-                    text-lg
-                    font-bold
-                    text-slate-800
-                  "
-                >
+                <h3 className="mt-4 text-lg font-bold text-jr-titre">
                   Aucune anomalie détectée
                 </h3>
 
-                <p
-                  className="
-                    mt-1
-                    max-w-md
-                    text-sm
-                    text-slate-500
-                  "
-                >
+                <p className="mt-1 max-w-md text-sm text-jr-faible">
                   Aucun relevé ne présente
                   actuellement un écart supérieur
                   au seuil défini.
@@ -2333,22 +1787,7 @@ function AnomaliesPage() {
                   disabled={
                     analysing
                   }
-                  className="
-                    mt-5
-                    inline-flex
-                    items-center
-                    gap-2
-                    rounded-xl
-                    bg-blue-600
-                    px-4
-                    py-2.5
-                    text-sm
-                    font-semibold
-                    text-white
-                    hover:bg-blue-700
-                    disabled:opacity-60
-                  "
-                >
+                  className="mt-5 inline-flex items-center gap-2 rounded-md jr-btn jr-btn-elec px-4 py-2.5 text-sm font-semibold disabled:opacity-60">
                   <RefreshCw
                     size={16}
                     className={
@@ -2362,114 +1801,49 @@ function AnomaliesPage() {
                 </button>
               </div>
             ) : (
-              <div
-                className="
-                  overflow-x-auto
-                "
-              >
-                <table
-                  className="
-                    min-w-[1200px]
-                    w-full
-                    text-left
-                  "
-                >
-                  <thead
-                    className="
-                      border-b
-                      border-slate-200
-                      bg-slate-50
-                    "
-                  >
-                    <tr
-                      className="
-                        text-xs
-                        uppercase
-                        tracking-wider
-                        text-slate-500
-                      "
-                    >
-                      <th className="
-                        px-5
-                        py-4
-                        font-semibold
-                      ">
+              <div className="overflow-x-auto">
+                <table className="min-w-[1200px] w-full text-left">
+                  <thead className="jr-thead border-b border-jr-bordure">
+                    <tr className="text-xs uppercase tracking-wider text-jr-faible">
+                      <th className="px-5 py-4 font-semibold">
                         Date
                       </th>
 
-                      <th className="
-                        px-5
-                        py-4
-                        font-semibold
-                      ">
+                      <th className="px-5 py-4 font-semibold">
                         Compteur
                       </th>
 
-                      <th className="
-                        px-5
-                        py-4
-                        font-semibold
-                      ">
+                      <th className="px-5 py-4 font-semibold">
                         Abonné
                       </th>
 
-                      <th className="
-                        px-5
-                        py-4
-                        font-semibold
-                      ">
+                      <th className="px-5 py-4 font-semibold">
                         Consommation
                       </th>
 
-                      <th className="
-                        px-5
-                        py-4
-                        font-semibold
-                      ">
+                      <th className="px-5 py-4 font-semibold">
                         Référence
                       </th>
 
-                      <th className="
-                        px-5
-                        py-4
-                        font-semibold
-                      ">
+                      <th className="px-5 py-4 font-semibold">
                         Variation
                       </th>
 
-                      <th className="
-                        px-5
-                        py-4
-                        font-semibold
-                      ">
+                      <th className="px-5 py-4 font-semibold">
                         Niveau
                       </th>
 
-                      <th className="
-                        px-5
-                        py-4
-                        font-semibold
-                      ">
+                      <th className="px-5 py-4 font-semibold">
                         Statut
                       </th>
 
-                      <th className="
-                        px-5
-                        py-4
-                        text-right
-                        font-semibold
-                      ">
+                      <th className="px-5 py-4 text-right font-semibold">
                         Action
                       </th>
                     </tr>
                   </thead>
 
-                  <tbody
-                    className="
-                      divide-y
-                      divide-slate-100
-                    "
-                  >
+                  <tbody className="divide-y divide-jr-bordure">
                     {anomalies.map(
                       (anomalie) => {
                         const isEau =
@@ -2491,38 +1865,18 @@ function AnomaliesPage() {
                             key={
                               anomalie.id
                             }
-                            className="
-                              transition
-                              hover:bg-slate-50
-                            "
-                          >
+                            className="transition hover:bg-[var(--jr-eau-pale)] motion-reduce:transition-none">
                             {/* DATE */}
 
-                            <td
-                              className="
-                                px-5
-                                py-4
-                              "
-                            >
-                              <p
-                                className="
-                                  font-semibold
-                                  text-slate-800
-                                "
-                              >
+                            <td className="px-5 py-4">
+                              <p className="font-semibold text-jr-texte">
                                 {formatDate(
                                   anomalie
                                     .date_releve
                                 )}
                               </p>
 
-                              <p
-                                className="
-                                  mt-1
-                                  text-xs
-                                  text-slate-500
-                                "
-                              >
+                              <p className="mt-1 text-xs text-jr-faible">
                                 {anomalie
                                   .type_anomalie ===
                                 'SURCONSOMMATION'
@@ -2534,65 +1888,39 @@ function AnomaliesPage() {
 
                             {/* COMPTEUR */}
 
-                            <td
-                              className="
-                                px-5
-                                py-4
-                              "
-                            >
-                              <div
-                                className="
-                                  flex
-                                  items-center
-                                  gap-2
-                                "
-                              >
-                                <div
-                                  className={`
+                            <td className="px-5 py-4">
+                              <div className="flex items-center gap-2">
+                                <div className={`
                                     rounded-lg
                                     p-2
                                     ${
                                       isEau
-                                        ? 'bg-cyan-50'
-                                        : 'bg-amber-50'
+                                        ? 'bg-[var(--jr-eau-pale)]'
+                                        : 'bg-[var(--jr-elec-pale)]'
                                     }
                                   `}
                                 >
                                   {isEau ? (
                                     <Droplets
                                       size={16}
-                                      className="
-                                        text-cyan-600
-                                      "
+                                      className="text-jr-lien"
                                     />
                                   ) : (
                                     <Zap
                                       size={16}
-                                      className="
-                                        text-amber-600
-                                      "
+                                      className="text-jr-elec"
                                     />
                                   )}
                                 </div>
 
                                 <div>
-                                  <p
-                                    className="
-                                      font-semibold
-                                      text-slate-800
-                                    "
-                                  >
+                                  <p className="font-semibold text-jr-texte">
                                     {anomalie
                                       .numero_compteur ||
                                       '—'}
                                   </p>
 
-                                  <p
-                                    className="
-                                      text-xs
-                                      text-slate-500
-                                    "
-                                  >
+                                  <p className="text-xs text-jr-faible">
                                     {getTypeLabel(
                                       anomalie
                                         .type_compteur
@@ -2605,44 +1933,21 @@ function AnomaliesPage() {
 
                             {/* ABONNÉ */}
 
-                            <td
-                              className="
-                                px-5
-                                py-4
-                              "
-                            >
-                              <div
-                                className="
-                                  flex
-                                  items-center
-                                  gap-2
-                                "
-                              >
+                            <td className="px-5 py-4">
+                              <div className="flex items-center gap-2">
                                 <UserRound
                                   size={16}
-                                  className="
-                                    text-slate-400
-                                  "
+                                  className="text-jr-faible"
                                 />
 
                                 <div>
-                                  <p
-                                    className="
-                                      font-medium
-                                      text-slate-800
-                                    "
-                                  >
+                                  <p className="font-medium text-jr-texte">
                                     {anomalie
                                       .abonne_nom_complet ||
                                       '—'}
                                   </p>
 
-                                  <p
-                                    className="
-                                      text-xs
-                                      text-slate-500
-                                    "
-                                  >
+                                  <p className="text-xs text-jr-faible">
                                     {anomalie
                                       .numero_abonne ||
                                       '—'}
@@ -2654,18 +1959,8 @@ function AnomaliesPage() {
 
                             {/* CONSOMMATION */}
 
-                            <td
-                              className="
-                                px-5
-                                py-4
-                              "
-                            >
-                              <p
-                                className="
-                                  font-bold
-                                  text-slate-900
-                                "
-                              >
+                            <td className="px-5 py-4">
+                              <p className="font-bold text-jr-texte">
                                 {formatNumber(
                                   anomalie.valeur
                                 )}{' '}
@@ -2679,18 +1974,8 @@ function AnomaliesPage() {
 
                             {/* RÉFÉRENCE */}
 
-                            <td
-                              className="
-                                px-5
-                                py-4
-                              "
-                            >
-                              <p
-                                className="
-                                  font-medium
-                                  text-slate-700
-                                "
-                              >
+                            <td className="px-5 py-4">
+                              <p className="font-medium text-jr-doux">
                                 {formatNumber(
                                   anomalie
                                     .valeur_reference
@@ -2701,13 +1986,7 @@ function AnomaliesPage() {
                                 )}
                               </p>
 
-                              <p
-                                className="
-                                  mt-1
-                                  text-xs
-                                  text-slate-400
-                                "
-                              >
+                              <p className="mt-1 text-xs text-jr-faible">
                                 3 relevés précédents
                               </p>
                             </td>
@@ -2715,22 +1994,16 @@ function AnomaliesPage() {
 
                             {/* VARIATION */}
 
-                            <td
-                              className="
-                                px-5
-                                py-4
-                              "
-                            >
-                              <div
-                                className={`
+                            <td className="px-5 py-4">
+                              <div className={`
                                   inline-flex
                                   items-center
                                   gap-1.5
                                   font-bold
                                   ${
                                     isHausse
-                                      ? 'text-red-600'
-                                      : 'text-blue-600'
+                                      ? 'text-jr-err'
+                                      : 'text-jr-lien'
                                   }
                                 `}
                               >
@@ -2754,14 +2027,8 @@ function AnomaliesPage() {
 
                             {/* NIVEAU */}
 
-                            <td
-                              className="
-                                px-5
-                                py-4
-                              "
-                            >
-                              <Badge
-                                className={
+                            <td className="px-5 py-4">
+                              <Badge className={
                                   getNiveauClasses(
                                     anomalie
                                       .niveau
@@ -2778,14 +2045,8 @@ function AnomaliesPage() {
 
                             {/* STATUT */}
 
-                            <td
-                              className="
-                                px-5
-                                py-4
-                              "
-                            >
-                              <Badge
-                                className={
+                            <td className="px-5 py-4">
+                              <Badge className={
                                   getStatutClasses(
                                     anomalie
                                       .statut
@@ -2802,13 +2063,7 @@ function AnomaliesPage() {
 
                             {/* ACTION */}
 
-                            <td
-                              className="
-                                px-5
-                                py-4
-                                text-right
-                              "
-                            >
+                            <td className="px-5 py-4 text-right">
                               <button
                                 type="button"
                                 onClick={() =>
@@ -2816,24 +2071,7 @@ function AnomaliesPage() {
                                     anomalie
                                   )
                                 }
-                                className="
-                                  inline-flex
-                                  items-center
-                                  gap-2
-                                  rounded-xl
-                                  border
-                                  border-slate-200
-                                  bg-white
-                                  px-3
-                                  py-2
-                                  text-xs
-                                  font-semibold
-                                  text-slate-700
-                                  hover:border-blue-200
-                                  hover:bg-blue-50
-                                  hover:text-blue-700
-                                "
-                              >
+                                className="inline-flex items-center gap-2 rounded-md border border-jr-bordure jr-verre px-3 py-2 text-xs font-semibold text-jr-doux hover:border-[var(--jr-eau-clair)] hover:bg-[var(--jr-eau-pale)] hover:text-jr-lien">
                                 <Eye
                                   size={15}
                                 />
@@ -2857,69 +2095,18 @@ function AnomaliesPage() {
           ================================================= */}
 
           {selected && (
-            <div
-              className="
-                fixed
-                inset-0
-                z-[100]
-                flex
-                items-center
-                justify-center
-                bg-slate-950/50
-                p-4
-                backdrop-blur-sm
-              "
-            >
-              <div
-                className="
-                  max-h-[92vh]
-                  w-full
-                  max-w-3xl
-                  overflow-y-auto
-                  rounded-3xl
-                  bg-white
-                  shadow-2xl
-                "
-              >
+            <div role="dialog" aria-modal="true" className="fixed inset-0 z-[100] flex items-center justify-center jr-entree p-4 backdrop-blur-sm" style={{ backgroundColor: 'color-mix(in srgb, var(--jr-eau-fonce) 55%, transparent)' }}>
+              <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-lg jr-verre-fort shadow-2xl">
 
                 {/* HEADER MODAL */}
 
-                <div
-                  className="
-                    sticky
-                    top-0
-                    z-10
-                    flex
-                    items-start
-                    justify-between
-                    border-b
-                    border-slate-200
-                    bg-white
-                    p-5
-                    sm:p-6
-                  "
-                >
+                <div className="sticky top-0 z-10 flex items-start justify-between border-b border-jr-bordure jr-verre-fort p-5 sm:p-6">
                   <div>
-                    <p
-                      className="
-                        text-xs
-                        font-bold
-                        uppercase
-                        tracking-wider
-                        text-blue-600
-                      "
-                    >
+                    <p className="text-xs font-bold uppercase tracking-wider text-jr-lien">
                       Anomalie #{selected.id}
                     </p>
 
-                    <h2
-                      className="
-                        mt-1
-                        text-xl
-                        font-bold
-                        text-slate-900
-                      "
-                    >
+                    <h2 className="mt-1 text-xl font-bold text-jr-titre">
                       {selected
                         .numero_compteur ||
                         'Compteur'}
@@ -2934,14 +2121,7 @@ function AnomaliesPage() {
                     disabled={
                       saving
                     }
-                    className="
-                      rounded-xl
-                      p-2
-                      text-slate-500
-                      hover:bg-slate-100
-                      hover:text-slate-800
-                    "
-                  >
+                    className="rounded-md p-2 text-jr-faible hover:bg-[var(--jr-eau-pale)] hover:text-jr-texte">
                     <X
                       size={20}
                     />
@@ -2951,50 +2131,17 @@ function AnomaliesPage() {
 
                 {/* CONTENU */}
 
-                <div
-                  className="
-                    space-y-5
-                    p-5
-                    sm:p-6
-                  "
-                >
+                <div className="space-y-5 p-5 sm:p-6">
 
                   {/* Informations principales */}
 
-                  <div
-                    className="
-                      grid
-                      grid-cols-1
-                      gap-4
-                      md:grid-cols-3
-                    "
-                  >
-                    <div
-                      className="
-                        rounded-2xl
-                        border
-                        border-slate-200
-                        bg-slate-50
-                        p-4
-                      "
-                    >
-                      <p
-                        className="
-                          text-xs
-                          font-semibold
-                          text-slate-500
-                        "
-                      >
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                    <div className="rounded-lg border border-jr-bordure bg-jr-champ p-4">
+                      <p className="text-xs font-semibold text-jr-faible">
                         Date du relevé
                       </p>
 
-                      <p
-                        className="
-                          mt-2
-                          font-bold
-                          text-slate-900
-                        "
-                      >
+                      <p className="mt-2 font-bold text-jr-texte">
                         {formatDate(
                           selected.date_releve
                         )}
@@ -3002,32 +2149,12 @@ function AnomaliesPage() {
                     </div>
 
 
-                    <div
-                      className="
-                        rounded-2xl
-                        border
-                        border-slate-200
-                        bg-slate-50
-                        p-4
-                      "
-                    >
-                      <p
-                        className="
-                          text-xs
-                          font-semibold
-                          text-slate-500
-                        "
-                      >
+                    <div className="rounded-lg border border-jr-bordure bg-jr-champ p-4">
+                      <p className="text-xs font-semibold text-jr-faible">
                         Consommation
                       </p>
 
-                      <p
-                        className="
-                          mt-2
-                          font-bold
-                          text-slate-900
-                        "
-                      >
+                      <p className="mt-2 font-bold text-jr-texte">
                         {formatNumber(
                           selected.valeur
                         )}{' '}
@@ -3038,32 +2165,12 @@ function AnomaliesPage() {
                     </div>
 
 
-                    <div
-                      className="
-                        rounded-2xl
-                        border
-                        border-slate-200
-                        bg-slate-50
-                        p-4
-                      "
-                    >
-                      <p
-                        className="
-                          text-xs
-                          font-semibold
-                          text-slate-500
-                        "
-                      >
+                    <div className="rounded-lg border border-jr-bordure bg-jr-champ p-4">
+                      <p className="text-xs font-semibold text-jr-faible">
                         Référence
                       </p>
 
-                      <p
-                        className="
-                          mt-2
-                          font-bold
-                          text-slate-900
-                        "
-                      >
+                      <p className="mt-2 font-bold text-jr-texte">
                         {formatNumber(
                           selected.valeur_reference
                         )}{' '}
@@ -3077,36 +2184,13 @@ function AnomaliesPage() {
 
                   {/* Variation / niveau */}
 
-                  <div
-                    className="
-                      grid
-                      grid-cols-1
-                      gap-4
-                      md:grid-cols-2
-                    "
-                  >
-                    <div
-                      className="
-                        rounded-2xl
-                        border
-                        border-slate-200
-                        p-5
-                      "
-                    >
-                      <p
-                        className="
-                          text-xs
-                          font-semibold
-                          uppercase
-                          tracking-wider
-                          text-slate-400
-                        "
-                      >
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="rounded-lg border border-jr-bordure p-5">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-jr-faible">
                         Variation
                       </p>
 
-                      <p
-                        className={`
+                      <p className={`
                           mt-2
                           text-3xl
                           font-bold
@@ -3114,8 +2198,8 @@ function AnomaliesPage() {
                             toNumber(
                               selected.variation
                             ) >= 0
-                              ? 'text-red-600'
-                              : 'text-blue-600'
+                              ? 'text-jr-err'
+                              : 'text-jr-lien'
                           }
                         `}
                       >
@@ -3126,33 +2210,13 @@ function AnomaliesPage() {
                     </div>
 
 
-                    <div
-                      className="
-                        rounded-2xl
-                        border
-                        border-slate-200
-                        p-5
-                      "
-                    >
-                      <p
-                        className="
-                          text-xs
-                          font-semibold
-                          uppercase
-                          tracking-wider
-                          text-slate-400
-                        "
-                      >
+                    <div className="rounded-lg border border-jr-bordure p-5">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-jr-faible">
                         Niveau
                       </p>
 
-                      <div
-                        className="
-                          mt-3
-                        "
-                      >
-                        <Badge
-                          className={
+                      <div className="mt-3">
+                        <Badge className={
                             getNiveauClasses(
                               selected.niveau
                             )
@@ -3169,74 +2233,28 @@ function AnomaliesPage() {
 
                   {/* Compteur / abonné */}
 
-                  <div
-                    className="
-                      grid
-                      grid-cols-1
-                      gap-4
-                      md:grid-cols-2
-                    "
-                  >
-                    <div
-                      className="
-                        rounded-2xl
-                        border
-                        border-slate-200
-                        p-5
-                      "
-                    >
-                      <div
-                        className="
-                          flex
-                          items-center
-                          gap-3
-                        "
-                      >
-                        <div
-                          className="
-                            rounded-xl
-                            bg-blue-50
-                            p-2.5
-                          "
-                        >
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="rounded-lg border border-jr-bordure p-5">
+                      <div className="flex items-center gap-3">
+                        <div className="rounded-md bg-[var(--jr-eau-pale)] p-2.5">
                           <Gauge
                             size={19}
-                            className="
-                              text-blue-600
-                            "
+                            className="text-jr-lien"
                           />
                         </div>
 
                         <div>
-                          <p
-                            className="
-                              text-xs
-                              font-semibold
-                              text-slate-500
-                            "
-                          >
+                          <p className="text-xs font-semibold text-jr-faible">
                             Compteur
                           </p>
 
-                          <p
-                            className="
-                              mt-1
-                              font-bold
-                              text-slate-900
-                            "
-                          >
+                          <p className="mt-1 font-bold text-jr-texte">
                             {selected
                               .numero_compteur ||
                               '—'}
                           </p>
 
-                          <p
-                            className="
-                              mt-1
-                              text-xs
-                              text-slate-500
-                            "
-                          >
+                          <p className="mt-1 text-xs text-jr-faible">
                             {getTypeLabel(
                               selected.type_compteur
                             )}
@@ -3246,66 +2264,27 @@ function AnomaliesPage() {
                     </div>
 
 
-                    <div
-                      className="
-                        rounded-2xl
-                        border
-                        border-slate-200
-                        p-5
-                      "
-                    >
-                      <div
-                        className="
-                          flex
-                          items-center
-                          gap-3
-                        "
-                      >
-                        <div
-                          className="
-                            rounded-xl
-                            bg-slate-100
-                            p-2.5
-                          "
-                        >
+                    <div className="rounded-lg border border-jr-bordure p-5">
+                      <div className="flex items-center gap-3">
+                        <div className="rounded-md bg-jr-bordure p-2.5">
                           <UserRound
                             size={19}
-                            className="
-                              text-slate-600
-                            "
+                            className="text-jr-doux"
                           />
                         </div>
 
                         <div>
-                          <p
-                            className="
-                              text-xs
-                              font-semibold
-                              text-slate-500
-                            "
-                          >
+                          <p className="text-xs font-semibold text-jr-faible">
                             Abonné
                           </p>
 
-                          <p
-                            className="
-                              mt-1
-                              font-bold
-                              text-slate-900
-                            "
-                          >
+                          <p className="mt-1 font-bold text-jr-texte">
                             {selected
                               .abonne_nom_complet ||
                               '—'}
                           </p>
 
-                          <p
-                            className="
-                              mt-1
-                              text-xs
-                              text-slate-500
-                            "
-                          >
+                          <p className="mt-1 text-xs text-jr-faible">
                             {selected
                               .numero_abonne ||
                               '—'}
@@ -3318,35 +2297,12 @@ function AnomaliesPage() {
 
                   {/* Analyse automatique */}
 
-                  <div
-                    className="
-                      rounded-2xl
-                      border
-                      border-blue-200
-                      bg-blue-50
-                      p-5
-                    "
-                  >
-                    <p
-                      className="
-                        text-xs
-                        font-bold
-                        uppercase
-                        tracking-wider
-                        text-blue-700
-                      "
-                    >
+                  <div className="rounded-lg border border-[var(--jr-eau-clair)] bg-[var(--jr-eau-pale)] p-5">
+                    <p className="text-xs font-bold uppercase tracking-wider text-jr-lien">
                       Analyse automatique
                     </p>
 
-                    <p
-                      className="
-                        mt-2
-                        text-sm
-                        leading-6
-                        text-blue-900
-                      "
-                    >
+                    <p className="mt-2 text-sm leading-6 text-jr-titre">
                       {selected.description ||
                         'Variation inhabituelle détectée.'}
                     </p>
@@ -3355,39 +2311,14 @@ function AnomaliesPage() {
 
                   {/* Traitement */}
 
-                  <div
-                    className="
-                      rounded-2xl
-                      border
-                      border-slate-200
-                      p-5
-                    "
-                  >
-                    <h3
-                      className="
-                        font-bold
-                        text-slate-900
-                      "
-                    >
+                  <div className="rounded-lg border border-jr-bordure p-5">
+                    <h3 className="font-bold text-jr-titre">
                       Traitement de l’anomalie
                     </h3>
 
 
-                    <label
-                      className="
-                        mt-4
-                        block
-                      "
-                    >
-                      <span
-                        className="
-                          mb-2
-                          block
-                          text-xs
-                          font-semibold
-                          text-slate-600
-                        "
-                      >
+                    <label className="mt-4 block">
+                      <span className="mb-2 block text-xs font-semibold text-jr-doux">
                         Statut
                       </span>
 
@@ -3402,21 +2333,7 @@ function AnomaliesPage() {
                             event.target.value
                           )
                         }
-                        className="
-                          w-full
-                          rounded-xl
-                          border
-                          border-slate-200
-                          bg-white
-                          px-3
-                          py-2.5
-                          text-sm
-                          outline-none
-                          focus:border-blue-500
-                          focus:ring-2
-                          focus:ring-blue-100
-                        "
-                      >
+                        className="w-full rounded-md border px-3 py-2.5 text-sm outline-none jr-field">
                         <option value="NOUVELLE">
                           Nouvelle
                         </option>
@@ -3436,21 +2353,8 @@ function AnomaliesPage() {
                     </label>
 
 
-                    <label
-                      className="
-                        mt-4
-                        block
-                      "
-                    >
-                      <span
-                        className="
-                          mb-2
-                          block
-                          text-xs
-                          font-semibold
-                          text-slate-600
-                        "
-                      >
+                    <label className="mt-4 block">
+                      <span className="mb-2 block text-xs font-semibold text-jr-doux">
                         Commentaire de traitement
                       </span>
 
@@ -3470,21 +2374,7 @@ function AnomaliesPage() {
                           Décrivez la vérification,
                           l’intervention ou la décision...
                         "
-                        className="
-                          w-full
-                          resize-none
-                          rounded-xl
-                          border
-                          border-slate-200
-                          bg-white
-                          px-3
-                          py-3
-                          text-sm
-                          outline-none
-                          focus:border-blue-500
-                          focus:ring-2
-                          focus:ring-blue-100
-                        "
+                        className="w-full resize-none rounded-md border px-3 py-3 text-sm outline-none jr-field"
                       />
                     </label>
                   </div>
@@ -3492,18 +2382,7 @@ function AnomaliesPage() {
 
                   {/* Actions */}
 
-                  <div
-                    className="
-                      flex
-                      flex-col-reverse
-                      gap-3
-                      border-t
-                      border-slate-100
-                      pt-5
-                      sm:flex-row
-                      sm:justify-end
-                    "
-                  >
+                  <div className="flex flex-col-reverse gap-3 border-t border-jr-bordure pt-5 sm:flex-row sm:justify-end">
                     <button
                       type="button"
                       onClick={
@@ -3512,20 +2391,7 @@ function AnomaliesPage() {
                       disabled={
                         saving
                       }
-                      className="
-                        rounded-xl
-                        border
-                        border-slate-200
-                        bg-white
-                        px-5
-                        py-2.5
-                        text-sm
-                        font-semibold
-                        text-slate-700
-                        hover:bg-slate-50
-                        disabled:opacity-60
-                      "
-                    >
+                      className="rounded-md border border-jr-bordure jr-verre-fort px-5 py-2.5 text-sm font-semibold text-jr-doux hover:bg-[var(--jr-eau-pale)] disabled:opacity-60">
                       Fermer
                     </button>
 
@@ -3537,29 +2403,11 @@ function AnomaliesPage() {
                       disabled={
                         saving
                       }
-                      className="
-                        inline-flex
-                        items-center
-                        justify-center
-                        gap-2
-                        rounded-xl
-                        bg-blue-600
-                        px-5
-                        py-2.5
-                        text-sm
-                        font-semibold
-                        text-white
-                        hover:bg-blue-700
-                        disabled:cursor-not-allowed
-                        disabled:opacity-60
-                      "
-                    >
+                      className="inline-flex items-center justify-center gap-2 rounded-md jr-btn jr-btn-elec px-5 py-2.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60">
                       {saving && (
                         <Loader2
                           size={16}
-                          className="
-                            animate-spin
-                          "
+                          className="animate-spin"
                         />
                       )}
 
@@ -3572,7 +2420,35 @@ function AnomaliesPage() {
           )}
         </main>
       </div>
-    </div>
+
+      {/* =================================================
+          TOASTS (en bas à droite)
+      ================================================= */}
+
+      <div className="pointer-events-none fixed bottom-4 right-4 z-[120] flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2">
+        {error && (
+          <Toast
+            key={`erreur-${error}`}
+            genre="erreur"
+            titre="Une erreur est survenue"
+            message={error}
+            duree={8000}
+            onClose={() => setError('')}
+          />
+        )}
+
+        {success && (
+          <Toast
+            key={`succes-${success}`}
+            genre="succes"
+            titre="Opération réussie"
+            message={success}
+            duree={6000}
+            onClose={() => setSuccess('')}
+          />
+        )}
+      </div>
+    </AdminShell>
   );
 }
 

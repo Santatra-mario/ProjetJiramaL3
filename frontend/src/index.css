@@ -17,12 +17,7 @@ body {
   box-sizing: border-box;
 }
 
-/* =========================================================
-   THÈME JIRAMA : VARIABLES DE COULEUR
-   Bleu = eau, orange = électricité.
-   :root = mode clair, .dark = mode sombre (classe posée sur <html>).
-   C'est ici (et seulement ici) qu'on ajuste les couleurs.
-========================================================= */
+
 :root {
   /* Marque */
   --jr-eau-fonce: #0a3566;
@@ -662,4 +657,70 @@ html.jr-theme-anim *::after {
   .jr-btn-elec {
     transition: none;
   }
+}
+
+/* =========================================================
+   PAGE RELEVÉS : PALETTE OFFICIELLE JIRAMA (mode clair)
+   Active seulement quand la page pose la classe .jr-palette-jirama
+   (voir RelevesPage). Mode sombre et autres pages : inchangés.
+   Bleu #0054A6 · bleu foncé #003B73 · rouge #E30613 · jaune #F7C600
+   Blanc #FFFFFF · gris clair #F4F7FB · gris foncé #263445
+========================================================= */
+html:not(.dark):has(.jr-palette-jirama) {
+  --jr-fond-debut: #f4f7fb;
+  --jr-fond: #f4f7fb;
+  --jr-fond-fin: #f4f7fb;
+  --jr-surface: #ffffff;
+  --jr-champ: #f4f7fb;
+
+  --jr-texte: #263445;
+  --jr-titre: #003b73;
+  --jr-texte-doux: color-mix(in srgb, #263445 82%, #ffffff);
+  --jr-texte-faible: color-mix(in srgb, #263445 70%, #ffffff);
+
+  --jr-bordure: color-mix(in srgb, #0054a6 14%, #ffffff);
+  --jr-bordure-forte: color-mix(in srgb, #0054a6 32%, #ffffff);
+
+  --jr-eau: #0054a6;
+  --jr-eau-fonce: #003b73;
+  --jr-eau-clair: color-mix(in srgb, #0054a6 72%, #ffffff);
+  --jr-eau-pale: color-mix(in srgb, #0054a6 8%, #ffffff);
+  --jr-lien: #0054a6;
+
+  --jr-elec: #f7c600;
+  --jr-elec-fonce: color-mix(in srgb, #f7c600 50%, #263445);
+  --jr-elec-pale: color-mix(in srgb, #f7c600 20%, #ffffff);
+  --jr-elec-anneau: color-mix(in srgb, #f7c600 45%, transparent);
+  --jr-attention: color-mix(in srgb, #f7c600 30%, #263445);
+  --jr-sur-elec: #263445;
+
+  --jr-err: #e30613;
+  --jr-err-pale: color-mix(in srgb, #e30613 8%, #ffffff);
+  --jr-err-bordure: color-mix(in srgb, #e30613 40%, #ffffff);
+
+  --jr-focus: #0054a6;
+  --jr-focus-anneau: color-mix(in srgb, #0054a6 28%, transparent);
+}
+
+/* Bouton principal bleu (le bleu domine l'interface) */
+.jr-btn-bleu {
+  background-color: var(--jr-eau);
+  color: #ffffff;
+  transition: background-color 0.15s, transform 0.1s;
+}
+.jr-btn-bleu:hover:not(:disabled) {
+  background-color: var(--jr-eau-fonce);
+}
+.jr-btn-bleu:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+/* En-tête de tableau : fond bleu très clair, libellés en capitales */
+.jr-thead th {
+  background-color: var(--jr-eau-pale);
+  color: var(--jr-titre);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
