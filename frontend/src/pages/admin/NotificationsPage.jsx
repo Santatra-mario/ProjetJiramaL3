@@ -33,6 +33,8 @@ import Sidebar from '../../components/admin/Sidebar.jsx';
 
 import Header from '../../components/admin/Header.jsx';
 
+import AdminShell from '../../components/admin/AdminShell.jsx';
+
 
 /* =========================================================
    OUTILS
@@ -121,21 +123,12 @@ function getStatusLabel(
 }
 
 
-function getStatusClasses(
-  statut
-) {
-  if (
-    statut ===
-    'EN_ATTENTE'
-  ) {
-    return (
-      'border-amber-200 bg-amber-50 text-amber-700'
-    );
+function getStatusClasses(statut) {
+  if (statut === 'EN_ATTENTE') {
+    return 'border-[var(--jr-elec-anneau)] bg-[var(--jr-elec-pale)] text-jr-attention';
   }
 
-  return (
-    'border-emerald-200 bg-emerald-50 text-emerald-700'
-  );
+  return 'border-[var(--jr-ok-anneau)] bg-[var(--jr-ok-pale)] text-jr-ok';
 }
 
 
@@ -152,18 +145,11 @@ function getTypeLabel(type) {
 
 
 function getTypeClasses(type) {
-  if (
-    type ===
-    'ALERTE_ANOMALIE'
-  ) {
-    return (
-      'border-red-200 bg-red-50 text-red-700'
-    );
+  if (type === 'ALERTE_ANOMALIE') {
+    return 'border-[var(--jr-err-bordure)] bg-[var(--jr-err-pale)] text-jr-err';
   }
 
-  return (
-    'border-blue-200 bg-blue-50 text-blue-700'
-  );
+  return 'border-[var(--jr-eau-clair)] bg-[var(--jr-eau-pale)] text-jr-lien';
 }
 
 
@@ -191,6 +177,26 @@ function getTypeIcon(
   }
 
   return Bell;
+}
+
+
+function getSubscriberName(notification = {}) {
+  // Le backend renvoie nom_abonne / prenom_abonne.
+  // Les deux anciens alias sont gardés pour compatibilité.
+  const prenom =
+    notification.prenom_abonne ||
+    notification.abonne_prenom ||
+    '';
+
+  const nom =
+    notification.nom_abonne ||
+    notification.abonne_nom ||
+    '';
+
+  return [prenom, nom]
+    .filter(Boolean)
+    .join(' ')
+    .trim() || 'Abonné non renseigné';
 }
 
 
@@ -258,10 +264,13 @@ function NotificationsPage() {
   ] = useState('');
 
 
+  // Par défaut, afficher uniquement les notifications à traiter.
+  // Les notifications traitées restent enregistrées et peuvent être consultées
+  // en choisissant explicitement « Traitées » ou « Tous les statuts ».
   const [
     statutFilter,
     setStatutFilter,
-  ] = useState('TOUS');
+  ] = useState('EN_ATTENTE');
 
 
   const [
@@ -275,6 +284,45 @@ function NotificationsPage() {
     setSelectedNotification,
   ] = useState(null);
 
+  // Suppression confirmée uniquement après validation explicite de l'utilisateur.
+  const [
+    pendingDelete,
+    setPendingDelete,
+  ] = useState(null);
+
+  const [
+    deletingId,
+    setDeletingId,
+  ] = useState(null);
+
+  const [
+    toast,
+    setToast,
+  ] = useState(null);
+
+
+  // Toast temporaire avec nettoyage du timer.
+  useEffect(() => {
+    if (!toast) return undefined;
+    const timer = window.setTimeout(() => setToast(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  // Fermer les dialogues avec Échap.
+  useEffect(() => {
+    if (!selectedNotification && !pendingDelete) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        if (pendingDelete && deletingId === null) {
+          setPendingDelete(null);
+        } else if (selectedNotification && !pendingDelete) {
+          setSelectedNotification(null);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedNotification, pendingDelete, deletingId]);
 
   /* =======================================================
      UTILISATEUR CONNECTÉ
@@ -402,29 +450,9 @@ function NotificationsPage() {
           }
 
 
-          /*
-           * Analyse automatique des anomalies.
-           * Une nouvelle anomalie peut donc générer
-           * automatiquement une notification.
-           */
-
-          try {
-
-            await axiosClient.post(
-              '/anomalies/analyser'
-            );
-
-          } catch (
-            analysisError
-          ) {
-
-            console.warn(
-              'Analyse anomalies avant notifications non disponible :',
-              analysisError
-            );
-          }
-
-
+          // Le backend synchronise déjà les anomalies et les notifications
+          // dans GET /notifications. Éviter un second POST ici empêche
+          // de lancer deux analyses à chaque chargement ou actualisation.
           const response =
             await axiosClient.get(
               '/notifications'
@@ -443,13 +471,29 @@ function NotificationsPage() {
           }
 
 
-          setNotifications(
-            Array.isArray(
-              response.data?.data
-            )
-              ? response.data.data
-              : []
-          );
+          const notificationList =
+            response.data?.notifications ??
+            response.data?.data;
+
+          if (!Array.isArray(notificationList)) {
+            throw new Error(
+              'Format de réponse inattendu : la liste des notifications est absente.'
+            );
+          }
+
+          // Normaliser les statuts provenant de l'API pour éviter les écarts
+          // de casse ou les espaces (ex. « envoye » / « ENVOYE ») dans les filtres.
+          const notificationsNormalisees = notificationList.map((notification) => ({
+            ...notification,
+            statut: String(notification?.statut ?? '')
+              .trim()
+              .toUpperCase(),
+          }));
+
+          setNotifications(notificationsNormalisees);
+          if (isRefresh) {
+            setToast({ type: 'success', message: 'Notifications actualisées.' });
+          }
 
         } catch (
           requestError
@@ -541,11 +585,13 @@ function NotificationsPage() {
           notification
         ) => {
 
+          const statutNotification = String(notification.statut || '')
+            .trim()
+            .toUpperCase();
+
           const correspondStatut =
-            statutFilter ===
-              'TOUS' ||
-            notification.statut ===
-              statutFilter;
+            statutFilter === 'TOUS' ||
+            statutNotification === statutFilter;
 
 
           const correspondType =
@@ -574,6 +620,8 @@ function NotificationsPage() {
             notification.destinataire,
             notification.numero_compteur,
             notification.numero_abonne,
+            notification.nom_abonne,
+            notification.prenom_abonne,
             notification.abonne_nom,
             notification.abonne_prenom,
             notification.type,
@@ -609,7 +657,7 @@ function NotificationsPage() {
   const enAttente =
     notifications.filter(
       notification =>
-        notification.statut ===
+        String(notification.statut || '').trim().toUpperCase() ===
         'EN_ATTENTE'
     ).length;
 
@@ -617,7 +665,7 @@ function NotificationsPage() {
   const traitees =
     notifications.filter(
       notification =>
-        notification.statut ===
+        String(notification.statut || '').trim().toUpperCase() ===
         'ENVOYE'
     ).length;
 
@@ -647,7 +695,15 @@ function NotificationsPage() {
           );
 
 
+        if (response.data?.status === 'error') {
+          throw new Error(
+            response.data?.message ||
+            'Impossible de récupérer le détail de la notification.'
+          );
+        }
+
         setSelectedNotification(
+          response.data?.notification ||
           response.data?.data ||
           notification
         );
@@ -672,111 +728,92 @@ function NotificationsPage() {
      TRAITER UNE NOTIFICATION
   ======================================================= */
 
-  const markAsRead =
-    async (
-      notificationId
-    ) => {
+  const markAsRead = async (notificationId) => {
+    // Empêcher les traitements concurrents et doubles clics.
+    if (actionLoading) return;
 
-      try {
+    try {
+      setActionLoading(true);
+      setError('');
+      setSuccess('');
 
-        setActionLoading(
-          true
-        );
+      const response = await axiosClient.patch(
+        `/notifications/${notificationId}/lue`
+      );
 
-        setError('');
-        setSuccess('');
-
-
-        const response =
-          await axiosClient.patch(
-            `/notifications/${notificationId}/lue`
-          );
-
-
-        if (
-          response.data?.status !==
-          'success'
-        ) {
-
-          throw new Error(
-            response.data?.message ||
-            'Impossible de traiter la notification.'
-          );
-        }
-
-
-        setNotifications(
-          previous =>
-            previous.map(
-              notification =>
-                notification.id ===
-                notificationId
-                  ? {
-                      ...notification,
-                      statut:
-                        'ENVOYE',
-                      date_envoi:
-                        response.data?.data
-                          ?.date_envoi ||
-                        notification.date_envoi ||
-                        new Date().toISOString(),
-                    }
-                  : notification
-            )
-        );
-
-
-        if (
-          selectedNotification?.id ===
-          notificationId
-        ) {
-
-          setSelectedNotification(
-            previous =>
-              previous
-                ? {
-                    ...previous,
-                    statut:
-                      'ENVOYE',
-                    date_envoi:
-                      response.data?.data
-                        ?.date_envoi ||
-                      previous.date_envoi ||
-                      new Date().toISOString(),
-                  }
-                : previous
-          );
-        }
-
-
-        setSuccess(
-          'Notification traitée avec succès.'
-        );
-
-      } catch (
-        requestError
-      ) {
-
-        console.error(
-          'Erreur traitement notification :',
-          requestError
-        );
-
-
-        setError(
-          requestError.response?.data
-            ?.message ||
-          requestError.message ||
-          'Impossible de traiter la notification.'
-        );
-
-      } finally {
-
-        setActionLoading(
-          false
+      if (response.data?.status !== 'success') {
+        throw new Error(
+          response.data?.message ||
+          'Le serveur n’a pas confirmé le traitement de cette notification.'
         );
       }
-    };
+
+      // Le backend renvoie la ligne réellement enregistrée en base.
+      const notificationServeur =
+        response.data?.notification ?? response.data?.data ?? null;
+
+      const notificationActuelle = notifications.find(
+        (item) => String(item.id) === String(notificationId)
+      );
+
+      const notificationTraitee = {
+        ...(notificationActuelle || {}),
+        ...(notificationServeur || {}),
+        id: notificationServeur?.id ?? notificationId,
+        statut: String(notificationServeur?.statut || 'ENVOYE')
+          .trim()
+          .toUpperCase(),
+        date_envoi:
+          notificationServeur?.date_envoi ||
+          notificationActuelle?.date_envoi ||
+          new Date().toISOString(),
+      };
+
+      // Mettre à jour selon la réponse confirmée du backend. Avec le filtre
+      // par défaut EN_ATTENTE, la ligne traitée disparaît sans être supprimée.
+      setNotifications((previous) => previous.map((notification) =>
+        String(notification.id) === String(notificationId)
+          ? { ...notification, ...notificationTraitee }
+          : notification
+      ));
+
+      setSelectedNotification((previous) => (
+        previous && String(previous.id) === String(notificationId)
+          ? { ...previous, ...notificationTraitee }
+          : previous
+      ));
+
+      setToast({
+        type: 'success',
+        message: response.data?.message || 'Notification traitée avec succès.',
+      });
+    } catch (requestError) {
+      console.error('Erreur traitement notification :', requestError);
+
+      const status = requestError.response?.status;
+      if (status === 401 || status === 403) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        navigate('/', { replace: true });
+        return;
+      }
+
+      setError(
+        requestError.response?.data?.message ||
+        requestError.message ||
+        'Impossible de traiter la notification.'
+      );
+      setToast({
+        type: 'error',
+        message:
+          requestError.response?.data?.message ||
+          requestError.message ||
+          'Impossible de traiter la notification. Veuillez réessayer.',
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
 
   /* =======================================================
@@ -814,29 +851,42 @@ function NotificationsPage() {
         }
 
 
+        const treatedAt = new Date().toISOString();
+
         setNotifications(
           previous =>
             previous.map(
               notification =>
-                notification.statut ===
+                String(notification.statut || '').trim().toUpperCase() ===
                 'EN_ATTENTE'
                   ? {
                       ...notification,
-                      statut:
-                        'ENVOYE',
+                      statut: 'ENVOYE',
                       date_envoi:
                         notification.date_envoi ||
-                        new Date().toISOString(),
+                        treatedAt,
                     }
                   : notification
             )
         );
 
-
-        setSuccess(
-          response.data?.message ||
-          'Toutes les notifications ont été traitées.'
+        setSelectedNotification(
+          previous =>
+            previous?.statut === 'EN_ATTENTE'
+              ? {
+                  ...previous,
+                  statut: 'ENVOYE',
+                  date_envoi: previous.date_envoi || treatedAt,
+                }
+              : previous
         );
+
+
+        setSuccess('');
+        setToast({
+          type: 'success',
+          message: response.data?.message || 'Toutes les notifications ont été traitées.',
+        });
 
       } catch (
         requestError
@@ -868,100 +918,92 @@ function NotificationsPage() {
      SUPPRIMER
   ======================================================= */
 
-  const deleteNotification =
-    async (
-      notificationId
-    ) => {
+  // Ouvre la confirmation personnalisée sans appeler le backend.
+  const deleteNotification = (notificationId) => {
+    const notification = notifications.find(
+      (item) => item.id === notificationId
+    );
 
-      const confirmed =
-        window.confirm(
-          'Voulez-vous vraiment supprimer cette notification ?'
+    if (!notification || deletingId !== null) return;
+    setPendingDelete(notification);
+  };
+
+  // Le backend est appelé uniquement après confirmation.
+  const confirmDeleteNotification = async () => {
+    if (!pendingDelete || deletingId !== null) return;
+
+    const notificationId = pendingDelete.id;
+
+    try {
+      setDeletingId(notificationId);
+      setActionLoading(true);
+      setError('');
+      setSuccess('');
+
+      const response = await axiosClient.delete(
+        `/notifications/${notificationId}`
+      );
+
+      if (response.data?.status !== 'success') {
+        throw new Error(
+          response.data?.message ||
+          'Impossible de supprimer la notification.'
         );
+      }
 
+      // Le backend peut supprimer plusieurs doublons liés à la même anomalie.
+      // Utiliser les identifiants réellement renvoyés par le serveur.
+      const idsSupprimes = new Set(
+        (Array.isArray(response.data?.deletedIds) && response.data.deletedIds.length > 0
+          ? response.data.deletedIds
+          : [response.data?.deletedId ?? notificationId]
+        ).map((id) => String(id))
+      );
 
-      if (!confirmed) {
+      setNotifications((previous) =>
+        previous.filter((notification) => !idsSupprimes.has(String(notification.id)))
+      );
+
+      const memeAnomalieSupprimee =
+        pendingDelete?.anomalie_id != null &&
+        selectedNotification?.anomalie_id != null &&
+        String(selectedNotification.anomalie_id) === String(pendingDelete.anomalie_id);
+
+      if (
+        (selectedNotification?.id != null && idsSupprimes.has(String(selectedNotification.id))) ||
+        memeAnomalieSupprimee
+      ) {
+        setSelectedNotification(null);
+      }
+
+      setPendingDelete(null);
+      setToast({
+        type: 'success',
+        message: response.data?.message || 'Notification supprimée avec succès.',
+      });
+    } catch (requestError) {
+      console.error('Erreur suppression notification :', requestError);
+
+      const status = requestError.response?.status;
+      if (status === 401 || status === 403) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        navigate('/', { replace: true });
         return;
       }
 
-
-      try {
-
-        setActionLoading(
-          true
-        );
-
-        setError('');
-        setSuccess('');
-
-
-        const response =
-          await axiosClient.delete(
-            `/notifications/${notificationId}`
-          );
-
-
-        if (
-          response.data?.status !==
-          'success'
-        ) {
-
-          throw new Error(
-            response.data?.message ||
-            'Impossible de supprimer la notification.'
-          );
-        }
-
-
-        setNotifications(
-          previous =>
-            previous.filter(
-              notification =>
-                notification.id !==
-                notificationId
-            )
-        );
-
-
-        if (
-          selectedNotification?.id ===
-          notificationId
-        ) {
-
-          setSelectedNotification(
-            null
-          );
-        }
-
-
-        setSuccess(
-          'Notification supprimée avec succès.'
-        );
-
-      } catch (
-        requestError
-      ) {
-
-        console.error(
-          'Erreur suppression notification :',
-          requestError
-        );
-
-
-        setError(
-          requestError.response?.data
-            ?.message ||
+      setToast({
+        type: 'error',
+        message:
+          requestError.response?.data?.message ||
           requestError.message ||
-          'Impossible de supprimer la notification.'
-        );
-
-      } finally {
-
-        setActionLoading(
-          false
-        );
-      }
-    };
-
+          'Impossible de supprimer la notification. Veuillez réessayer.',
+      });
+    } finally {
+      setDeletingId(null);
+      setActionLoading(false);
+    }
+  };
 
   /* =======================================================
      RETOUR
@@ -977,13 +1019,11 @@ function NotificationsPage() {
 
 
   return (
-
-    <div
-      className="
-        min-h-screen
-        bg-slate-100
-      "
+    <AdminShell
+      intensite="calme"
+      className="selection:bg-[var(--jr-elec)] selection:text-[var(--jr-sur-elec)]"
     >
+      <div className="min-h-screen">
 
       {/* =================================================
           SIDEBAR
@@ -1297,7 +1337,7 @@ function NotificationsPage() {
                 gap-3
                 rounded-2xl
                 border
-                border-red-200
+                border-[var(--jr-err-bordure)]
                 bg-red-50
                 p-4
                 text-sm
@@ -1372,7 +1412,7 @@ function NotificationsPage() {
                 gap-3
                 rounded-2xl
                 border
-                border-emerald-200
+                border-[var(--jr-ok-anneau)]
                 bg-emerald-50
                 p-4
                 text-sm
@@ -1534,8 +1574,8 @@ function NotificationsPage() {
               className="
                 rounded-2xl
                 border
-                border-amber-200
-                bg-amber-50/70
+                border-[var(--jr-elec-anneau)]
+                bg-[var(--jr-elec-pale)]
                 p-5
                 shadow-sm
               "
@@ -1613,8 +1653,8 @@ function NotificationsPage() {
               className="
                 rounded-2xl
                 border
-                border-emerald-200
-                bg-emerald-50/70
+                border-[var(--jr-ok-anneau)]
+                bg-[var(--jr-ok-pale)]
                 p-5
                 shadow-sm
               "
@@ -1692,8 +1732,8 @@ function NotificationsPage() {
               className="
                 rounded-2xl
                 border
-                border-red-200
-                bg-red-50/70
+                border-[var(--jr-err-bordure)]
+                bg-[var(--jr-err-pale)]
                 p-5
                 shadow-sm
               "
@@ -2107,7 +2147,9 @@ function NotificationsPage() {
                     text-slate-400
                   "
                 >
-                  Aucune notification ne correspond aux filtres actuels.
+                  {notifications.length === 0
+                    ? 'Aucune notification n’est enregistrée pour le moment.'
+                    : 'Aucun résultat ne correspond à votre recherche ou aux filtres sélectionnés.'}
                 </p>
 
               </div>
@@ -2221,14 +2263,14 @@ function NotificationsPage() {
                               notification.id
                             }
                             className={`
-                              border-b
-                              border-slate-100
-                              transition
-                              hover:bg-slate-50/70
+                              group border-b border-slate-100 dark:border-slate-700/70
+                              transition-colors duration-200 ease-out
+                              hover:bg-blue-50/80 dark:hover:bg-blue-900/30
+                              hover:[box-shadow:inset_3px_0_0_#29b6f6]
                               ${
                                 notification.statut ===
                                 'EN_ATTENTE'
-                                  ? 'bg-amber-50/20'
+                                  ? 'bg-[color:color-mix(in_srgb,var(--jr-elec-pale)_22%,transparent)]'
                                   : 'bg-white'
                               }
                             `}
@@ -2259,13 +2301,16 @@ function NotificationsPage() {
                                     items-center
                                     justify-center
                                     rounded-xl
-                                    bg-blue-50
-                                    text-blue-600
+                                    bg-blue-50 dark:bg-blue-900/40
+                                    text-blue-600 dark:text-sky-300
+                                    transition-colors duration-200
+                                    group-hover:bg-blue-100 dark:group-hover:bg-blue-800/60
                                   "
                                 >
 
                                   <Icon
                                     size={19}
+                                    className="transition-colors duration-200"
                                   />
 
                                 </div>
@@ -2374,13 +2419,7 @@ function NotificationsPage() {
                                   text-slate-500
                                 "
                               >
-                                {[
-                                  notification.abonne_prenom,
-                                  notification.abonne_nom,
-                                ]
-                                  .filter(Boolean)
-                                  .join(' ') ||
-                                  'Abonné non renseigné'}
+                                {getSubscriberName(notification)}
                               </p>
 
                             </td>
@@ -2596,8 +2635,9 @@ function NotificationsPage() {
                                     text-xs
                                     font-bold
                                     text-slate-600
-                                    transition
-                                    hover:bg-slate-50
+                                    transition-colors duration-200
+                                    hover:bg-blue-50
+                                    dark:hover:bg-blue-900/40
                                   "
                                 >
 
@@ -2667,7 +2707,7 @@ function NotificationsPage() {
                                     justify-center
                                     rounded-lg
                                     border
-                                    border-red-200
+                                    border-[var(--jr-err-bordure)]
                                     bg-red-50
                                     p-2
                                     text-red-600
@@ -2713,6 +2753,113 @@ function NotificationsPage() {
           MODALE
       ===================================================== */}
 
+      {/* Toast de retour utilisateur */}
+      {toast && (
+        <div
+          className="fixed right-4 top-4 z-[80] w-[min(92vw,420px)]"
+          role={toast.type === 'error' ? 'alert' : 'status'}
+          aria-live={toast.type === 'error' ? 'assertive' : 'polite'}
+        >
+          <div className={`flex items-start gap-3 rounded-2xl border p-4 shadow-xl ${
+            toast.type === 'error'
+              ? 'border-red-200 bg-white text-red-800'
+              : 'border-emerald-200 bg-white text-emerald-800'
+          }`}>
+            {toast.type === 'error'
+              ? <AlertCircle size={20} className="mt-0.5 shrink-0" />
+              : <CheckCircle2 size={20} className="mt-0.5 shrink-0" />}
+            <p className="flex-1 text-sm font-semibold">{toast.message}</p>
+            <button
+              type="button"
+              onClick={() => setToast(null)}
+              aria-label="Fermer la notification"
+              title="Fermer"
+              className="rounded-lg p-1 transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+            >
+              <X size={17} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation de suppression */}
+      {pendingDelete && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && deletingId === null) {
+              setPendingDelete(null);
+            }
+          }}
+        >
+          <section
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-notification-title"
+            aria-describedby="delete-notification-description"
+            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600">
+                <Trash2 size={21} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 id="delete-notification-title" className="text-lg font-bold text-slate-900">
+                  Confirmer la suppression
+                </h2>
+                <p id="delete-notification-description" className="mt-2 text-sm leading-6 text-slate-600">
+                  Voulez-vous vraiment supprimer cette notification ?
+                </p>
+                {pendingDelete.sujet && (
+                  <p className="mt-2 break-words text-sm font-semibold text-slate-800">
+                    « {pendingDelete.sujet} »
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setPendingDelete(null)}
+                disabled={deletingId !== null}
+                aria-label="Fermer la confirmation"
+                className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setPendingDelete(null)}
+                disabled={deletingId !== null}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteNotification}
+                disabled={deletingId !== null}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-red-700 active:bg-red-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {deletingId !== null ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    Suppression...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={16} />
+                    Supprimer
+                  </>
+                )}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {selectedNotification && (
 
         <div
@@ -2727,9 +2874,18 @@ function NotificationsPage() {
             p-4
             backdrop-blur-sm
           "
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setSelectedNotification(null);
+            }
+          }}
         >
 
           <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="notification-detail-title"
+            onMouseDown={(event) => event.stopPropagation()}
             className="
               max-h-[92vh]
               w-full
@@ -2797,6 +2953,7 @@ function NotificationsPage() {
 
 
                   <h3
+                    id="notification-detail-title"
                     className="
                       mt-1
                       text-xl
@@ -3078,8 +3235,8 @@ function NotificationsPage() {
                     mt-5
                     rounded-2xl
                     border
-                    border-red-200
-                    bg-red-50/60
+                    border-[var(--jr-err-bordure)]
+                    bg-[var(--jr-err-pale)]
                     p-5
                   "
                 >
@@ -3433,7 +3590,7 @@ function NotificationsPage() {
                   gap-2
                   rounded-xl
                   border
-                  border-red-200
+                  border-[var(--jr-err-bordure)]
                   bg-red-50
                   px-4
                   py-2.5
@@ -3463,7 +3620,8 @@ function NotificationsPage() {
 
       )}
 
-    </div>
+      </div>
+    </AdminShell>
   );
 }
 

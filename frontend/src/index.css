@@ -724,3 +724,8 @@ html:not(.dark):has(.jr-palette-jirama) {
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
+
+/* ---------- Ajout : tuile claire derrière le logo (clair ET sombre) ---------- */
+:root {
+  --jr-logo-fond: #ffffff;
+}
