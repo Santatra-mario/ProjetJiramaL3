@@ -17,6 +17,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  Settings,
   ShieldCheck,
   TriangleAlert,
   X,
@@ -30,6 +31,7 @@ import {
   useToast,
 } from '../../ui/ToastProvider.jsx';
 import { traiterErreurSession } from './sessionResponsable.js';
+import { EVENEMENT_NOTIFICATIONS_RESPONSABLE } from './notificationsResponsable.js';
 
 const INTERVALLE_COMPTEUR = 30000;
 
@@ -51,6 +53,12 @@ const menuItems = [
     path: '/dashboard/responsable/notifications',
     icon: Bell,
     description: 'Alertes et messages',
+  },
+  {
+    label: 'Paramètres',
+    path: '/dashboard/responsable/parametres',
+    icon: Settings,
+    description: 'Notifications archivées',
   },
 ];
 
@@ -235,6 +243,12 @@ function ContenuLayout({ children, title }) {
     chargerCompteur();
     setMobileOpen(false);
   }, [location.pathname, chargerCompteur]);
+
+  useEffect(() => {
+    const actualiserCompteur = () => chargerCompteur();
+    window.addEventListener(EVENEMENT_NOTIFICATIONS_RESPONSABLE, actualiserCompteur);
+    return () => window.removeEventListener(EVENEMENT_NOTIFICATIONS_RESPONSABLE, actualiserCompteur);
+  }, [chargerCompteur]);
 
   /* ---------- Menu mobile : fermeture avec Échap ---------- */
 

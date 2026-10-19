@@ -132,9 +132,8 @@ router.patch(
 
   verifyToken,
 
-  checkRole(
-    ...rolesAutorises
-  ),
+  // Seul l’Administrateur peut enregistrer une décision finale.
+  checkRole('ADMINISTRATEUR'),
 
   updateAnomalieStatut
 );

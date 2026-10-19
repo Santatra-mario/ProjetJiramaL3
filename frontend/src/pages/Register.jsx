@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { motion, useReducedMotion } from 'framer-motion';
 
 import {
   AlertCircle,
@@ -486,6 +487,7 @@ function Avantage({ Icone, titre, texte, couleur }) {
 ========================================================= */
 function Register() {
   const navigate = useNavigate();
+  const reduceMotion = useReducedMotion();
 
   // --- État du formulaire ---
   const [form, setForm] = useState(FORM_INITIAL);
@@ -731,12 +733,45 @@ function Register() {
     <FondJirama>
       <BoutonTheme />
 
-      <div className="flex min-h-screen items-center justify-center px-4 pb-8 pt-20">
-        <div className="jr-entree w-full max-w-6xl">
-          <div className="grid overflow-hidden rounded-lg border border-jr-bordure bg-jr-surface shadow-2xl shadow-black/10 lg:grid-cols-[5fr_6fr]">
+      <style>{`
+        .jr-register-page { position:relative; isolation:isolate; overflow:hidden; min-height:100svh; color:var(--jr-texte); }
+        .jr-register-page::before { content:""; position:fixed; inset:0; z-index:-2; pointer-events:none; background:radial-gradient(ellipse at 8% 12%,rgba(24,133,207,.16),transparent 42%),radial-gradient(ellipse at 92% 88%,rgba(12,190,153,.10),transparent 38%); }
+        .jr-register-page::after { content:""; position:fixed; width:390px;height:390px;right:-210px;top:12%;z-index:-1;pointer-events:none;border-radius:50%;border:1px solid rgba(93,190,235,.12);box-shadow:0 0 0 38px rgba(93,190,235,.025),0 0 0 76px rgba(93,190,235,.02); }
+        .jr-register-page .jr-register-shell { overflow:hidden; border-radius:24px; border:1px solid var(--jr-bordure); box-shadow:0 28px 90px rgba(1,13,28,.20); }
+        .jr-register-page .jr-register-aside { min-height:760px; }
+        .jr-register-page .jr-register-aside h1 { max-width:470px; letter-spacing:-.035em; line-height:1.12; }
+        .jr-register-page .jr-register-form { padding:clamp(24px,4vw,52px); }
+        .jr-register-page .jr-field { min-height:48px; border-radius:12px; border-color:var(--jr-bordure); background:var(--jr-surface); transition:border-color .18s ease,box-shadow .18s ease,background .18s ease; }
+        .jr-register-page .jr-field:focus { outline:none; border-color:var(--jr-elec); box-shadow:0 0 0 4px color-mix(in srgb,var(--jr-elec) 18%,transparent); }
+        .jr-register-page .jr-field--err { border-color:var(--jr-err)!important; box-shadow:0 0 0 2px color-mix(in srgb,var(--jr-err) 12%,transparent); }
+        .jr-register-page .jr-field--ok { border-color:var(--jr-ok)!important; }
+        .jr-register-page .jr-role { border-radius:14px; min-height:140px; transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease; }
+        .jr-register-page .jr-role:hover { transform:translateY(-2px); box-shadow:0 8px 22px rgba(5,30,55,.08); }
+        .jr-register-page .jr-btn { min-height:50px; border-radius:12px; transition:transform .18s ease,filter .18s ease,box-shadow .18s ease; }
+        .jr-register-page .jr-btn:hover:not(:disabled) { filter:brightness(1.04); }
+        .jr-register-page .jr-lien:focus-visible,.jr-register-page .jr-btn:focus-visible,.jr-register-page .jr-role:focus-within { outline:3px solid var(--jr-elec); outline-offset:3px; }
+        .jr-register-page .jr-register-logo { display:inline-flex;align-items:center;justify-content:center;border-radius:14px;background:#fff;padding:10px 14px;box-shadow:0 10px 28px rgba(0,0,0,.14); }
+        .jr-register-page .jr-register-logo img { height:46px;width:auto;max-width:180px;object-fit:contain; }
+        .jr-register-page .jr-register-overline { display:inline-flex;align-items:center;gap:8px;border:1px solid rgba(175,220,255,.2);border-radius:999px;padding:8px 12px;background:rgba(255,255,255,.07);color:#d8f2ff;font-size:12px;font-weight:650; }
+        .jr-register-page .jr-register-title { font-size:clamp(1.8rem,3vw,2.3rem);font-weight:780;letter-spacing:-.04em;line-height:1.12; }
+        .jr-register-page .jr-register-intro { max-width:42ch;line-height:1.7; }
+        .jr-register-page .jr-register-foot { letter-spacing:.025em; }
+        @media(max-width:1023px) { .jr-register-page .jr-register-shell { max-width:620px;margin-inline:auto; } .jr-register-page .jr-register-aside { display:none!important; } .jr-register-page .jr-register-form { padding:clamp(22px,5vw,42px); } }
+        @media(max-width:520px) { .jr-register-page .jr-register-shell { border-radius:19px; } .jr-register-page .jr-role { min-height:120px; } .jr-register-page .jr-register-form { padding:22px 18px; } }
+        @media(prefers-reduced-motion:reduce) { .jr-register-page .jr-field,.jr-register-page .jr-role,.jr-register-page .jr-btn { transition:none!important; } .jr-register-page .jr-role:hover { transform:none; } }
+      `}</style>
+
+      <div className="jr-register-page flex min-h-screen items-center justify-center px-4 pb-8 pt-20">
+        <motion.div
+          className="jr-entree w-full max-w-6xl"
+          initial={reduceMotion ? false : { opacity: 0, y: 18 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.62, ease: [0.16, 1, 0.3, 1] }}
+        >
+          <div className="jr-register-shell grid bg-jr-surface lg:grid-cols-[5fr_6fr]">
             {/* ==================== PANNEAU GAUCHE ==================== */}
             <aside
-              className="relative hidden overflow-hidden p-10 text-white lg:flex lg:flex-col lg:justify-between xl:p-12"
+              className="jr-register-aside relative hidden overflow-hidden p-10 text-white lg:flex lg:flex-col lg:justify-between xl:p-12"
               style={{
                 background: 'linear-gradient(155deg, var(--jr-panneau-1) 0%, var(--jr-panneau-2) 60%, var(--jr-panneau-3) 100%)',
               }}
@@ -758,7 +793,7 @@ function Register() {
 
               <div className="relative">
                 {/* Logo sur pastille blanche pour rester lisible sur le bleu */}
-                <div className="mb-10 inline-flex rounded-md bg-white px-4 py-3 shadow-lg shadow-black/10">
+                <div className="jr-register-logo mb-10">
                   <img
                     src="/images/Jirama.png"
                     alt="Logo JIRAMA"
@@ -766,7 +801,7 @@ function Register() {
                   />
                 </div>
 
-                <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-sm font-medium text-blue-50">
+                <div className="jr-register-overline">
                   <ShieldCheck size={16} aria-hidden="true" />
                   Espace sécurisé
                 </div>
@@ -804,7 +839,7 @@ function Register() {
             </aside>
 
             {/* ==================== COLONNE FORMULAIRE ==================== */}
-            <main className="flex items-center justify-center p-6 sm:p-10 xl:p-12">
+            <main className="jr-register-form flex items-center justify-center">
               <div className="w-full max-w-md">
                 {succes ? (
                   /* ---------- Écran de succès ---------- */
@@ -872,8 +907,8 @@ function Register() {
                     </button>
 
                     {/* Logo mobile */}
-                    <div className="mb-6 flex justify-center lg:hidden">
-                      <span className="rounded-md bg-white px-3 py-2 shadow-sm ring-1 ring-black/5">
+                    <div className="mb-7 flex justify-center lg:hidden">
+                      <span className="jr-register-logo">
                       <img
                         src="/images/Jirama.png"
                         alt="Logo JIRAMA"
@@ -883,10 +918,10 @@ function Register() {
                     </div>
 
                     <div className="mb-6">
-                      <h2 className="text-3xl font-bold" style={{ color: COULEURS.titre }}>
+                      <h2 className="jr-register-title" style={{ color: COULEURS.titre }}>
                         Créer un compte
                       </h2>
-                      <p className="mt-2 text-sm leading-6 text-jr-doux">
+                      <p className="jr-register-intro mt-3 text-sm leading-6 text-jr-doux">
                         Renseignez vos informations pour accéder à l’application.
                       </p>
                     </div>
@@ -1111,10 +1146,10 @@ function Register() {
             </main>
           </div>
 
-          <p className="mt-5 text-center text-xs text-jr-doux">
+          <p className="jr-register-foot mt-5 text-center text-xs text-jr-doux">
             Application web JIRAMA — Suivi et analyse des consommations
           </p>
-        </div>
+        </motion.div>
       </div>
     </FondJirama>
   );

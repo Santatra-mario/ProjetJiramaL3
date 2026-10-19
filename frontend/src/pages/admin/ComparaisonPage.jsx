@@ -80,14 +80,6 @@ const COULEUR_PERIODE_1 = 'var(--jr-texte-faible)';
    DATES (calculs en heure locale, format AAAA-MM-JJ)
 ========================================================= */
 
-function versTexte(date) {
-  return [
-    date.getFullYear(),
-    String(date.getMonth() + 1).padStart(2, '0'),
-    String(date.getDate()).padStart(2, '0'),
-  ].join('-');
-}
-
 function depuisTexte(texte) {
   if (!texte || !/^\d{4}-\d{2}-\d{2}$/.test(texte)) {
     return null;
@@ -96,54 +88,16 @@ function depuisTexte(texte) {
   const [annee, mois, jour] = texte.split('-').map(Number);
   const date = new Date(annee, mois - 1, jour);
 
-  return Number.isNaN(date.getTime()) ? null : date;
-}
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getFullYear() !== annee ||
+    date.getMonth() !== mois - 1 ||
+    date.getDate() !== jour
+  ) {
+    return null;
+  }
 
-function aujourdhui() {
-  const maintenant = new Date();
-
-  return new Date(
-    maintenant.getFullYear(),
-    maintenant.getMonth(),
-    maintenant.getDate()
-  );
-}
-
-function ajouterJours(date, nombre) {
-  return new Date(
-    date.getFullYear(),
-    date.getMonth(),
-    date.getDate() + nombre
-  );
-}
-
-// Ajoute des mois sans déborder (31 mars - 1 mois = 28 ou 29 février)
-function ajouterMois(date, nombre) {
-  const cible = new Date(
-    date.getFullYear(),
-    date.getMonth() + nombre,
-    1
-  );
-
-  const dernierJour = new Date(
-    cible.getFullYear(),
-    cible.getMonth() + 1,
-    0
-  ).getDate();
-
-  return new Date(
-    cible.getFullYear(),
-    cible.getMonth(),
-    Math.min(date.getDate(), dernierJour)
-  );
-}
-
-function getToday() {
-  return versTexte(aujourdhui());
-}
-
-function getMonthsAgo(mois) {
-  return versTexte(ajouterMois(aujourdhui(), -mois));
+  return date;
 }
 
 // Nombre de jours, bornes incluses
@@ -187,70 +141,68 @@ function pluriel(nombre, mot) {
 }
 
 /* =========================================================
-   RACCOURCIS DE PÉRIODES
-   La période 2 est la plus récente, la période 1 la précède.
-   Les bornes sont incluses et les périodes ne se chevauchent jamais.
+   PÉRIODES CALÉES SUR LES DATES RÉELLES DE LA BASE
 ========================================================= */
 
-function construireRaccourcis(reference = aujourdhui()) {
-  const aujourd = reference;
+function datesTrieesDisponibles(dates) {
+  return [...new Set(
+    (Array.isArray(dates) ? dates : [])
+      .map((date) => String(date || '').slice(0, 10))
+      .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date) && depuisTexte(date))
+  )].sort();
+}
 
-  const debutMoisCourant = new Date(
-    aujourd.getFullYear(),
-    aujourd.getMonth(),
-    1
-  );
+function construirePeriodesDepuisDates(dates) {
+  const disponibles = datesTrieesDisponibles(dates);
 
-  const debutMoisPrecedent = new Date(
-    aujourd.getFullYear(),
-    aujourd.getMonth() - 1,
-    1
-  );
-
-  const finMoisPrecedent = ajouterJours(debutMoisCourant, -1);
-
-  const debut3Mois = ajouterJours(ajouterMois(aujourd, -3), 1);
-  const fin3MoisPrecedents = ajouterJours(debut3Mois, -1);
-  const debut3MoisPrecedents = ajouterMois(debut3Mois, -3);
-
-  function jours(nombre) {
+  // Deux périodes indépendantes nécessitent au minimum quatre dates distinctes :
+  // un début et une fin réels pour la période de référence et pour la période comparée.
+  if (disponibles.length < 4) {
     return {
-      dateDebut1: versTexte(ajouterJours(aujourd, -(2 * nombre - 1))),
-      dateFin1: versTexte(ajouterJours(aujourd, -nombre)),
-      dateDebut2: versTexte(ajouterJours(aujourd, -(nombre - 1))),
-      dateFin2: versTexte(aujourd),
+      dateDebut1: '',
+      dateFin1: '',
+      dateDebut2: '',
+      dateFin2: '',
     };
   }
 
+  const separation = Math.max(
+    2,
+    Math.min(disponibles.length - 2, Math.ceil(disponibles.length / 2))
+  );
+
+  return {
+    dateDebut1: disponibles[0],
+    dateFin1: disponibles[separation - 1],
+    dateDebut2: disponibles[separation],
+    dateFin2: disponibles[disponibles.length - 1],
+  };
+}
+
+function construireRaccourcis(dates) {
+  const disponibles = datesTrieesDisponibles(dates);
+
+  if (disponibles.length < 4) {
+    return [];
+  }
+
+  const toutHistorique = construirePeriodesDepuisDates(disponibles);
+  const quatreDernieres = disponibles.slice(-4);
+
   return [
     {
-      id: 'mois',
-      libelle: 'Mois précédent / mois en cours',
+      id: 'historique-base',
+      libelle: 'Historique disponible',
+      dates: toutHistorique,
+    },
+    {
+      id: 'quatre-dernieres-dates',
+      libelle: 'Quatre dernières dates',
       dates: {
-        dateDebut1: versTexte(debutMoisPrecedent),
-        dateFin1: versTexte(finMoisPrecedent),
-        dateDebut2: versTexte(debutMoisCourant),
-        dateFin2: versTexte(aujourd),
-      },
-    },
-    {
-      id: '7j',
-      libelle: '7 derniers jours / 7 précédents',
-      dates: jours(7),
-    },
-    {
-      id: '30j',
-      libelle: '30 derniers jours / 30 précédents',
-      dates: jours(30),
-    },
-    {
-      id: '3m',
-      libelle: '3 derniers mois / 3 précédents',
-      dates: {
-        dateDebut1: versTexte(debut3MoisPrecedents),
-        dateFin1: versTexte(fin3MoisPrecedents),
-        dateDebut2: versTexte(debut3Mois),
-        dateFin2: versTexte(aujourd),
+        dateDebut1: quatreDernieres[0],
+        dateFin1: quatreDernieres[1],
+        dateDebut2: quatreDernieres[2],
+        dateFin2: quatreDernieres[3],
       },
     },
   ];
@@ -296,6 +248,8 @@ function validerFiltres(filtres) {
   CHAMPS_DATES.forEach((champ) => {
     if (!filtres[champ]) {
       erreurs[champ] = 'Date requise.';
+    } else if (!depuisTexte(filtres[champ])) {
+      erreurs[champ] = 'Date invalide. Choisissez une date du calendrier.';
     }
   });
 
@@ -315,6 +269,17 @@ function validerFiltres(filtres) {
   ) {
     erreurs.periode2 =
       'La période 2 est invalide : le début doit précéder la fin.';
+  }
+
+  if (
+    !erreurs.dateDebut1 &&
+    !erreurs.dateFin1 &&
+    !erreurs.dateDebut2 &&
+    !erreurs.dateFin2 &&
+    filtres.dateFin1 >= filtres.dateDebut2
+  ) {
+    erreurs.chevauchement =
+      'Les périodes se chevauchent. La période 1 doit se terminer avant le début de la période 2.';
   }
 
   return erreurs;
@@ -371,15 +336,14 @@ function analyserResultat(resultat) {
   let Icone = Minus;
   let ton = 'neutre';
 
-  if (evolution !== null) {
-    const tendance =
-      tendanceApi === 'HAUSSE' || tendanceApi === 'BAISSE'
-        ? tendanceApi
-        : evolution > 0
-          ? 'HAUSSE'
-          : evolution < 0
-            ? 'BAISSE'
-            : 'STABLE';
+  if (difference !== null) {
+    const tendance = ['HAUSSE', 'BAISSE', 'STABLE'].includes(tendanceApi)
+      ? tendanceApi
+      : difference > 0
+        ? 'HAUSSE'
+        : difference < 0
+          ? 'BAISSE'
+          : 'STABLE';
 
     if (tendance === 'HAUSSE') {
       libelle = 'Hausse';
@@ -415,16 +379,51 @@ function analyserResultat(resultat) {
   let precision = '';
 
   if (evolution === null) {
-    precision =
-      total1 === 0 && total2 === 0
-        ? 'Aucune consommation n’est enregistrée sur les deux périodes.'
-        : 'Le pourcentage n’est pas calculable : le total de la période 1 est nul.';
+    if (total1 === null || total2 === null) {
+      precision =
+        'La comparaison complète n’est pas calculable : au moins une période ne dispose pas de deux index datés permettant de mesurer l’écart. Consultez le détail des index retenus ci-dessous.';
+    } else if (total1 === 0) {
+      precision =
+        total2 === 0
+          ? 'Les deux périodes ont un total calculé égal à zéro.'
+          : 'Le pourcentage n’est pas calculable, car la consommation de référence de la période 1 est nulle.';
+    }
   }
 
   const releves1 = nombreOuNull(resultat?.periode1?.nombre_releves);
   const releves2 = nombreOuNull(resultat?.periode2?.nombre_releves);
 
   const notes = [];
+
+  const nonCalculables1 = Number(
+    resultat?.periode1?.nombre_compteurs_non_calculables || 0
+  );
+  const nonCalculables2 = Number(
+    resultat?.periode2?.nombre_compteurs_non_calculables || 0
+  );
+
+  if (nonCalculables1 > 0) {
+    notes.push(
+      `Données insuffisantes pour ${pluriel(nonCalculables1, 'compteur')} en période 1 : deux index datés et cohérents sont nécessaires. Ces compteurs ne contribuent pas au total calculé.`
+    );
+  }
+
+  if (nonCalculables2 > 0) {
+    notes.push(
+      `Données insuffisantes pour ${pluriel(nonCalculables2, 'compteur')} en période 2 : deux index datés et cohérents sont nécessaires. Ces compteurs ne contribuent pas au total calculé.`
+    );
+  }
+
+  const exclus1 = Number(resultat?.periode1?.nombre_compteurs_exclus || 0);
+  const exclus2 = Number(resultat?.periode2?.nombre_compteurs_exclus || 0);
+
+  if (exclus1 > 0 || exclus2 > 0) {
+    const nombreExclus = Math.max(exclus1, exclus2);
+    const verbe = nombreExclus > 1 ? 'ne peuvent pas' : 'ne peut pas';
+    notes.push(
+      `${pluriel(nombreExclus, 'compteur')} ${verbe} être inclus dans la comparaison, car les index ne sont pas exploitables pour les deux périodes. Les deux totaux utilisent le même ensemble de compteurs.`
+    );
+  }
 
   if (releves1 === 0 && releves2 === 0) {
     notes.push(
@@ -577,13 +576,15 @@ function BlocPeriode({
   erreurDebut,
   erreurFin,
   erreurPeriode,
+  datesDisponibles = [],
+  chargementDates = false,
 }) {
   const jours = nombreJours(debut, fin);
   const idDebut = `champ-${nomDebut}`;
   const idFin = `champ-${nomFin}`;
   const idErreurPeriode = `erreur-periode-${numero}`;
 
-  function champ(id, nom, libelle, valeur, erreur, bornes) {
+  function champ(id, nom, libelle, valeur, erreur) {
     const invalide = Boolean(erreur || erreurPeriode);
     const decrit = [
       erreur ? `${id}-erreur` : null,
@@ -601,18 +602,30 @@ function BlocPeriode({
           {libelle}
         </label>
 
-        <input
+        <select
           id={id}
-          type="date"
           name={nom}
-          value={valeur}
+          value={valeur || ''}
           onChange={onChange}
+          disabled={chargementDates || datesDisponibles.length === 0}
           aria-invalid={invalide || undefined}
           aria-describedby={decrit || undefined}
-          className="jr-field w-full rounded-md border px-3 py-2.5 text-sm"
+          className="jr-field w-full rounded-md border px-3 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
           style={invalide ? { borderColor: 'var(--jr-err)' } : undefined}
-          {...bornes}
-        />
+        >
+          <option value="">
+            {chargementDates
+              ? 'Chargement des dates de la base…'
+              : datesDisponibles.length > 0
+                ? 'Choisir une date de relevé'
+                : 'Aucune date de relevé disponible'}
+          </option>
+          {datesDisponibles.map((date) => (
+            <option key={`${nom}-${date}`} value={date}>
+              {formatDate(date)}
+            </option>
+          ))}
+        </select>
 
         <MessageChamp id={`${id}-erreur`}>{erreur}</MessageChamp>
       </div>
@@ -645,20 +658,32 @@ function BlocPeriode({
           nomDebut,
           'Date de début',
           debut,
-          erreurDebut,
-          fin ? { max: fin } : {}
+          erreurDebut
         )}
         {champ(
           idFin,
           nomFin,
           'Date de fin',
           fin,
-          erreurFin,
-          debut ? { min: debut } : {}
+          erreurFin
         )}
       </div>
 
       <MessageChamp id={idErreurPeriode}>{erreurPeriode}</MessageChamp>
+
+      <div className="mt-5 rounded-md border border-jr-bordure bg-jr-champ p-3.5 sm:p-4">
+        <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-jr-doux">
+          <CalendarDays size={14} aria-hidden="true" />
+          Dates exactes prises en compte
+        </p>
+        <p className="mt-2 text-sm font-semibold text-jr-titre">
+          Du {formatDate(debut)} au {formatDate(fin)}
+        </p>
+        <p className="mt-1 text-xs leading-5 text-jr-faible">
+          {jours > 0 ? `${pluriel(jours, 'jour')} inclus.` : 'Sélectionnez une date de début et une date de fin valides.'}
+          {' '}Après le calcul, les index réellement utilisés et leurs dates de lecture seront affichés dans les résultats.
+        </p>
+      </div>
     </fieldset>
   );
 }
@@ -690,10 +715,11 @@ function SqueletteResultat() {
 const FILTRES_PAR_DEFAUT = () => ({
   type: 'ELECTRICITE',
   compteurId: '',
-  dateDebut1: getMonthsAgo(3),
-  dateFin1: getMonthsAgo(1),
-  dateDebut2: getMonthsAgo(1),
-  dateFin2: getToday(),
+  // Les dates sont remplies après lecture des dates réellement présentes en base.
+  dateDebut1: '',
+  dateFin1: '',
+  dateDebut2: '',
+  dateFin2: '',
 });
 
 function ComparaisonPage() {
@@ -707,6 +733,11 @@ function ComparaisonPage() {
   const [loadingCompteurs, setLoadingCompteurs] = useState(true);
   const [erreurCompteurs, setErreurCompteurs] = useState('');
   const [versionCompteurs, setVersionCompteurs] = useState(0);
+
+  const [datesDisponibles, setDatesDisponibles] = useState([]);
+  const [loadingDatesDisponibles, setLoadingDatesDisponibles] = useState(false);
+  const [erreurDatesDisponibles, setErreurDatesDisponibles] = useState('');
+  const requeteDatesRef = useRef(0);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -760,6 +791,77 @@ function ComparaisonPage() {
       navigate('/', { replace: true });
     }
   }, [navigate]);
+
+  /* ---------- Dates réelles disponibles dans PostgreSQL ---------- */
+
+  useEffect(() => {
+    const controle = new AbortController();
+    const numeroRequete = ++requeteDatesRef.current;
+
+    async function chargerDatesDisponibles() {
+      setLoadingDatesDisponibles(true);
+      setErreurDatesDisponibles('');
+      setDatesDisponibles([]);
+
+      try {
+        const response = await axiosClient.get('/comparaison/dates-disponibles', {
+          params: {
+            type: filters.type,
+            compteurId: filters.compteurId || undefined,
+          },
+          signal: controle.signal,
+        });
+
+        if (numeroRequete !== requeteDatesRef.current) return;
+
+        const dates = datesTrieesDisponibles(response.data?.data?.dates || []);
+        setDatesDisponibles(dates);
+        setFilters((previous) => ({
+          ...previous,
+          ...construirePeriodesDepuisDates(dates),
+        }));
+        setResultat(null);
+        setError('');
+        setRaccourciActif(null);
+
+        if (dates.length < 4) {
+          setErreurDatesDisponibles(
+            dates.length === 0
+              ? 'Aucune date de lecture exploitable n’a été trouvée dans la base pour cette sélection.'
+              : `Seulement ${pluriel(dates.length, 'date de lecture')} disponible${dates.length > 1 ? 's' : ''}. Il faut au moins quatre dates distinctes pour construire deux périodes non chevauchantes à comparer.`
+          );
+        }
+      } catch (err) {
+        if (err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError') return;
+        if (numeroRequete !== requeteDatesRef.current) return;
+
+        if (err.response?.status === 401 || err.response?.status === 403) {
+          deconnecter();
+          return;
+        }
+
+        setDatesDisponibles([]);
+        setFilters((previous) => ({
+          ...previous,
+          dateDebut1: '',
+          dateFin1: '',
+          dateDebut2: '',
+          dateFin2: '',
+        }));
+        setErreurDatesDisponibles(
+          err.response?.data?.message ||
+            'Impossible de récupérer les dates de relevés depuis la base de données.'
+        );
+      } finally {
+        if (!controle.signal.aborted && numeroRequete === requeteDatesRef.current) {
+          setLoadingDatesDisponibles(false);
+        }
+      }
+    }
+
+    chargerDatesDisponibles();
+    return () => controle.abort();
+  }, [filters.type, filters.compteurId, deconnecter]);
 
   /* ---------- Chargement des compteurs ---------- */
 
@@ -816,9 +918,12 @@ function ComparaisonPage() {
   const compteursFiltres = useMemo(
     () =>
       compteurs.filter((compteur) => {
-        const type = String(compteur.type || '')
+        const valeurBrute = String(compteur.type || '')
           .trim()
           .toUpperCase();
+        const type = valeurBrute === 'ÉLECTRICITÉ'
+          ? 'ELECTRICITE'
+          : valeurBrute;
 
         return type === filters.type;
       }),
@@ -858,7 +963,11 @@ function ComparaisonPage() {
     // un changement de filtre invalide le calcul en cours et le résultat affiché
     annulerRequete();
 
-    setFilters((previous) => ({ ...previous, [name]: value }));
+    setFilters((previous) =>
+      name === 'type'
+        ? { ...previous, type: value, compteurId: '' }
+        : { ...previous, [name]: value }
+    );
     setError('');
     setResultat(null);
 
@@ -895,8 +1004,8 @@ function ComparaisonPage() {
   if (zoneChevauchement) {
     avertissementsFormulaire.push(
       zoneChevauchement.debut === zoneChevauchement.fin
-        ? `Les deux périodes se chevauchent le ${formatDate(zoneChevauchement.debut)} : ce jour est compté dans les deux totaux.`
-        : `Les deux périodes se chevauchent du ${formatDate(zoneChevauchement.debut)} au ${formatDate(zoneChevauchement.fin)} : ces jours sont comptés dans les deux totaux.`
+        ? `Les périodes se chevauchent le ${formatDate(zoneChevauchement.debut)}. Choisissez une date de fin de période 1 antérieure au début de période 2.`
+        : `Les périodes se chevauchent du ${formatDate(zoneChevauchement.debut)} au ${formatDate(zoneChevauchement.fin)}. Elles doivent être distinctes pour éviter de compter les mêmes jours deux fois.`
     );
   }
 
@@ -906,7 +1015,10 @@ function ComparaisonPage() {
     );
   }
 
-  const raccourcis = useMemo(() => construireRaccourcis(), []);
+  const raccourcis = useMemo(
+    () => construireRaccourcis(datesDisponibles),
+    [datesDisponibles]
+  );
 
   const typeActif =
     TYPES.find((type) => type.valeur === filters.type) || TYPES[0];
@@ -1009,7 +1121,10 @@ function ComparaisonPage() {
   const reset = () => {
     annulerRequete();
 
-    setFilters(FILTRES_PAR_DEFAUT());
+    setFilters({
+      ...FILTRES_PAR_DEFAUT(),
+      ...construirePeriodesDepuisDates(datesDisponibles),
+    });
     setRaccourciActif(null);
     setTentative(false);
     setResultat(null);
@@ -1052,29 +1167,48 @@ function ComparaisonPage() {
         nom: 'Période 1',
         libelle: 'Période 1',
         dates: `${formatDate(resultat.periode1?.dateDebut)} → ${formatDate(resultat.periode1?.dateFin)}`,
-        total: analyse.total1 ?? 0,
+        total: analyse.total1,
         couleur: COULEUR_PERIODE_1,
       },
       {
         nom: 'Période 2',
         libelle: 'Période 2',
         dates: `${formatDate(resultat.periode2?.dateDebut)} → ${formatDate(resultat.periode2?.dateFin)}`,
-        total: analyse.total2 ?? 0,
+        total: analyse.total2,
         couleur: typeResultat.couleur,
       },
     ];
   }, [resultat, analyse, typeResultat]);
 
   const libelleCompteurResultat = resultat?.compteur?.numero_compteur
-    ? `Compteur ${resultat.compteur.numero_compteur}`
+    ? `Référence client ${resultat.compteur.numero_compteur}`
     : 'Tous les compteurs';
 
   const styleTon = STYLES_TON[analyse?.ton || 'neutre'];
 
+  const lignesIndex = useMemo(() => {
+    if (!resultat) return [];
+
+    const periode1 = (resultat.periode1?.details_indices || []).map((ligne) => ({
+      ...ligne,
+      clePeriode: 'periode1',
+      nomPeriode: 'Période 1 · Référence',
+      couleurPeriode: COULEUR_PERIODE_1,
+    }));
+    const periode2 = (resultat.periode2?.details_indices || []).map((ligne) => ({
+      ...ligne,
+      clePeriode: 'periode2',
+      nomPeriode: 'Période 2 · Comparée',
+      couleurPeriode: typeResultat?.couleur || TYPES[0].couleur,
+    }));
+
+    return [...periode1, ...periode2];
+  }, [resultat, typeResultat]);
+
   const libelleSelection = [
     typeActif.libelle,
     compteurSelectionne
-      ? `compteur ${compteurSelectionne.numero_compteur}`
+      ? `Référence client ${compteurSelectionne.numero_compteur}`
       : 'tous les compteurs',
   ].join(' · ');
 
@@ -1238,7 +1372,7 @@ function ComparaisonPage() {
                         htmlFor="champ-compteur"
                         className="mb-1.5 block text-xs font-semibold text-jr-doux"
                       >
-                        Compteur
+                        Référence client
                       </label>
 
                       <select
@@ -1284,7 +1418,32 @@ function ComparaisonPage() {
 
                 <div className="border-t border-jr-bordure" />
 
-                {/* Raccourcis */}
+                <div
+                  role={erreurDatesDisponibles ? 'alert' : 'status'}
+                  aria-live="polite"
+                  className={`mx-5 mt-4 rounded-md border px-4 py-3 text-sm sm:mx-6 ${
+                    erreurDatesDisponibles
+                      ? 'border-jr-attention bg-jr-elec-pale text-jr-texte'
+                      : 'border-jr-bordure bg-jr-champ text-jr-doux'
+                  }`}
+                >
+                  {loadingDatesDisponibles ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 size={15} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                      Recherche des dates de lecture dans PostgreSQL…
+                    </span>
+                  ) : erreurDatesDisponibles ? (
+                    erreurDatesDisponibles
+                  ) : (
+                    <>
+                      <span className="font-semibold text-jr-titre">Dates réellement présentes dans la base :</span>{' '}
+                      {pluriel(datesDisponibles.length, 'date distincte')}, du {formatDate(datesDisponibles[0])} au {formatDate(datesDisponibles[datesDisponibles.length - 1])}.
+                      {' '}Les quatre champs de période proposent uniquement ces dates réelles.
+                    </>
+                  )}
+                </div>
+
+                {/* Raccourcis établis uniquement à partir des dates disponibles */}
                 <div className="flex flex-col gap-3 px-5 pt-5 sm:px-6 lg:flex-row lg:items-center">
                   <p className="flex shrink-0 items-center gap-2 text-xs font-semibold text-jr-doux">
                     <CalendarDays size={15} aria-hidden="true" />
@@ -1333,6 +1492,8 @@ function ComparaisonPage() {
                     erreurDebut={erreursChamps.dateDebut1}
                     erreurFin={erreursChamps.dateFin1}
                     erreurPeriode={erreursChamps.periode1}
+                    datesDisponibles={datesDisponibles}
+                    chargementDates={loadingDatesDisponibles}
                   />
 
                   <BlocPeriode
@@ -1348,6 +1509,8 @@ function ComparaisonPage() {
                     erreurDebut={erreursChamps.dateDebut2}
                     erreurFin={erreursChamps.dateFin2}
                     erreurPeriode={erreursChamps.periode2}
+                    datesDisponibles={datesDisponibles}
+                    chargementDates={loadingDatesDisponibles}
                   />
                 </div>
 
@@ -1421,7 +1584,7 @@ function ComparaisonPage() {
 
                     <button
                       type="submit"
-                      disabled={loading}
+                      disabled={loading || loadingDatesDisponibles || datesDisponibles.length < 4}
                       aria-busy={loading || undefined}
                       className="jr-btn jr-btn-elec inline-flex w-full items-center justify-center gap-2 rounded-md px-5 py-3 text-sm font-semibold shadow-sm disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto motion-reduce:transition-none"
                     >
@@ -1460,8 +1623,7 @@ function ComparaisonPage() {
                   <span className="font-semibold text-jr-texte">
                     Aucune comparaison lancée.
                   </span>{' '}
-                  Choisissez le type, les deux périodes, puis lancez le
-                  calcul : le résultat apparaîtra ici.
+                  Les dates sont chargées depuis les relevés réellement présents dans PostgreSQL. Choisissez deux périodes distinctes, puis lancez le calcul.
                 </p>
               </div>
             )}
@@ -1539,7 +1701,7 @@ function ComparaisonPage() {
                       })}
                     </dd>
                     <dd className="mt-1 text-xs text-jr-faible">
-                      Valeur calculée par le serveur
+                      Calcul fondé sur les index des mêmes compteurs
                     </dd>
                   </div>
 
@@ -1568,8 +1730,7 @@ function ComparaisonPage() {
                       Totaux par période
                     </h3>
                     <p className="mt-1 text-sm text-jr-faible">
-                      Somme des consommations des relevés de chaque période,
-                      en {analyse.unite}.
+                      Consommation calculée par compteur : index de fin retenu moins index de départ retenu, en {analyse.unite}.
                     </p>
 
                     <div
@@ -1698,96 +1859,148 @@ function ComparaisonPage() {
                   </div>
                 </div>
 
-                {/* Détail des périodes */}
+                {/* Index réellement utilisés dans les calculs */}
                 <div className="jr-verre overflow-hidden rounded-lg border border-jr-bordure shadow-sm">
                   <div className="border-b border-jr-bordure p-5 sm:p-6">
-                    <h3 className="text-base font-semibold text-jr-titre">
-                      Détail des périodes
-                    </h3>
-                    <p className="mt-1 text-sm text-jr-faible">
-                      Statistiques calculées sur les relevés de chaque période.
+                    <div className="flex items-start gap-3">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-jr-eau-pale text-jr-lien">
+                        <GitCompare size={18} aria-hidden="true" />
+                      </span>
+                      <div>
+                        <h3 className="text-base font-semibold text-jr-titre">
+                          Index utilisés pour calculer les périodes 1 et 2
+                        </h3>
+                        <p className="mt-1 max-w-3xl text-sm leading-6 text-jr-faible">
+                          Le calcul est effectué séparément pour chaque compteur : consommation de la période = index de fin retenu − index de départ retenu. Les dates affichées sous les index sont celles des lectures réelles utilisées ; elles peuvent différer des bornes sélectionnées lorsqu’aucune lecture n’a été faite exactement à ces dates.
+                        </p>
+                      </div>
+                    </div>
+                    <p className="mt-3 text-xs font-medium text-jr-doux">
+                      Compteurs inclus dans les deux calculs : {formatNombre(resultat.periode1?.nombre_compteurs_comparables ?? 0, { decimales: 0 })}.
                     </p>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-md border border-jr-bordure bg-jr-champ p-3.5">
+                        <p className="text-[11px] font-semibold uppercase tracking-wider text-jr-faible">Période 1 · Référence</p>
+                        <p className="mt-1.5 text-sm font-semibold text-jr-titre">
+                          {formatDate(resultat.periode1?.dateDebut)} → {formatDate(resultat.periode1?.dateFin)}
+                        </p>
+                        <p className="mt-1 text-sm text-jr-doux">
+                          Total calculé : <strong className="text-jr-texte">{valeurAvecUnite(analyse.total1, analyse.unite)}</strong>
+                        </p>
+                        <p className="mt-1 text-xs text-jr-faible">
+                          {formatNombre(resultat.periode1?.nombre_releves, { decimales: 0 })} relevé(s) dans la période.
+                        </p>
+                      </div>
+                      <div className="rounded-md border border-jr-bordure bg-jr-champ p-3.5">
+                        <p className="text-[11px] font-semibold uppercase tracking-wider text-jr-faible">Période 2 · Comparée</p>
+                        <p className="mt-1.5 text-sm font-semibold text-jr-titre">
+                          {formatDate(resultat.periode2?.dateDebut)} → {formatDate(resultat.periode2?.dateFin)}
+                        </p>
+                        <p className="mt-1 text-sm text-jr-doux">
+                          Total calculé : <strong className="text-jr-texte">{valeurAvecUnite(analyse.total2, analyse.unite)}</strong>
+                        </p>
+                        <p className="mt-1 text-xs text-jr-faible">
+                          {formatNombre(resultat.periode2?.nombre_releves, { decimales: 0 })} relevé(s) dans la période.
+                        </p>
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full text-left text-sm">
-                      <caption className="sr-only">
-                        Détail des deux périodes comparées
-                      </caption>
-
-                      <thead className="jr-thead text-[11px] uppercase tracking-wider">
-                        <tr>
-                          <th scope="col" className="px-5 py-3 font-semibold">Période</th>
-                          <th scope="col" className="px-5 py-3 font-semibold">Dates</th>
-                          <th scope="col" className="px-5 py-3 text-right font-semibold">Durée</th>
-                          <th scope="col" className="px-5 py-3 text-right font-semibold">Relevés</th>
-                          <th scope="col" className="px-5 py-3 text-right font-semibold">Total ({analyse.unite})</th>
-                          <th scope="col" className="px-5 py-3 text-right font-semibold">Moyenne</th>
-                          <th scope="col" className="px-5 py-3 text-right font-semibold">Minimum</th>
-                          <th scope="col" className="px-5 py-3 text-right font-semibold">Maximum</th>
-                        </tr>
-                      </thead>
-
-                      <tbody className="divide-y divide-jr-bordure">
-                        {[
-                          {
-                            cle: 'p1',
-                            nom: 'Période 1',
-                            couleur: COULEUR_PERIODE_1,
-                            donnees: resultat.periode1,
-                            jours: analyse.jours1,
-                          },
-                          {
-                            cle: 'p2',
-                            nom: 'Période 2',
-                            couleur: typeResultat.couleur,
-                            donnees: resultat.periode2,
-                            jours: analyse.jours2,
-                          },
-                        ].map((ligne) => (
-                          <tr
-                            key={ligne.cle}
-                            className="transition hover:bg-jr-eau-pale motion-reduce:transition-none"
-                          >
-                            <th
-                              scope="row"
-                              className="whitespace-nowrap px-5 py-3.5 font-semibold text-jr-texte"
-                            >
-                              <span className="inline-flex items-center gap-2">
-                                <Repere couleur={ligne.couleur} />
-                                {ligne.nom}
-                              </span>
-                            </th>
-                            <td className="whitespace-nowrap px-5 py-3.5 text-jr-doux">
-                              {formatDate(ligne.donnees?.dateDebut)} →{' '}
-                              {formatDate(ligne.donnees?.dateFin)}
-                            </td>
-                            <td className="whitespace-nowrap px-5 py-3.5 text-right text-jr-doux">
-                              {ligne.jours > 0
-                                ? pluriel(ligne.jours, 'jour')
-                                : '—'}
-                            </td>
-                            <td className="px-5 py-3.5 text-right text-jr-texte">
-                              {formatNombre(ligne.donnees?.nombre_releves, {
-                                decimales: 0,
-                              })}
-                            </td>
-                            <td className="px-5 py-3.5 text-right font-semibold text-jr-texte">
-                              {formatNombre(ligne.donnees?.total)}
-                            </td>
-                            <td className="px-5 py-3.5 text-right text-jr-doux">
-                              {formatNombre(ligne.donnees?.moyenne)}
-                            </td>
-                            <td className="px-5 py-3.5 text-right text-jr-doux">
-                              {formatNombre(ligne.donnees?.minimum)}
-                            </td>
-                            <td className="px-5 py-3.5 text-right text-jr-doux">
-                              {formatNombre(ligne.donnees?.maximum)}
-                            </td>
+                  {lignesIndex.length === 0 ? (
+                    <div className="flex items-start gap-3 p-5 sm:p-6" role="status">
+                      <AlertCircle size={18} className="mt-0.5 shrink-0 text-jr-attention" aria-hidden="true" />
+                      <div>
+                        <p className="text-sm font-semibold text-jr-titre">Aucun index exploitable dans ces périodes</p>
+                        <p className="mt-1 text-sm leading-6 text-jr-doux">
+                          Aucun relevé ne correspond aux périodes sélectionnées, ou les données ne permettent pas de déterminer les index de début et de fin. Vérifiez les dates ou choisissez une autre période.
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="max-h-[34rem] overflow-auto">
+                      <table className="min-w-[980px] w-full text-left text-sm">
+                        <caption className="sr-only">Index et calculs par compteur pour les deux périodes comparées</caption>
+                        <thead className="jr-thead sticky top-0 z-10 text-[11px] uppercase tracking-wider">
+                          <tr>
+                            <th scope="col" className="px-4 py-3 font-semibold">Période</th>
+                            <th scope="col" className="px-4 py-3 font-semibold">Référence client</th>
+                            <th scope="col" className="px-4 py-3 font-semibold">Abonné</th>
+                            <th scope="col" className="px-4 py-3 font-semibold">Index de départ retenu</th>
+                            <th scope="col" className="px-4 py-3 font-semibold">Index de fin retenu</th>
+                            <th scope="col" className="px-4 py-3 text-right font-semibold">Consommation calculée</th>
+                            <th scope="col" className="px-4 py-3 font-semibold">État</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="divide-y divide-jr-bordure">
+                          {lignesIndex.map((ligne) => {
+                            const calculeIndividuellement = ligne.statut_calcul === 'CALCULABLE';
+                            const calculable = calculeIndividuellement && ligne.contribue_comparaison !== false;
+                            const excluAutrePeriode = calculeIndividuellement && ligne.contribue_comparaison === false;
+                            const incoherent = ligne.statut_calcul === 'INDEX_INCOHERENT';
+                            const libelleEtat = calculable
+                              ? 'Inclus dans les totaux'
+                              : excluAutrePeriode
+                                ? 'Hors comparaison'
+                                : incoherent
+                                  ? 'À vérifier'
+                                  : ligne.statut_calcul === 'LECTURE_INSUFFISANTE'
+                                    ? 'Index insuffisants'
+                                    : 'Index indisponibles';
+
+                            return (
+                              <tr key={`${ligne.clePeriode}-${ligne.compteur_id}`} className="transition-colors hover:bg-jr-eau-pale motion-reduce:transition-none">
+                                <td className="whitespace-nowrap px-4 py-3.5 font-semibold text-jr-texte">
+                                  <span className="inline-flex items-center gap-2">
+                                    <Repere couleur={ligne.couleurPeriode} />
+                                    {ligne.nomPeriode}
+                                  </span>
+                                </td>
+                                <td className="whitespace-nowrap px-4 py-3.5 font-medium text-jr-texte">
+                                  {ligne.numero_compteur || `Compteur #${ligne.compteur_id}`}
+                                </td>
+                                <td className="px-4 py-3.5 text-jr-doux">
+                                  {ligne.abonne || ligne.numero_abonne || 'Abonné non renseigné'}
+                                </td>
+                                <td className="px-4 py-3.5">
+                                  <p className="font-semibold tabular-nums text-jr-texte">
+                                    {ligne.index_debut === null ? '—' : formatNombre(ligne.index_debut)}
+                                  </p>
+                                  <p className="mt-1 text-xs text-jr-faible">
+                                    {ligne.date_index_debut ? `Lecture du ${formatDate(ligne.date_index_debut)}` : 'Date de lecture indisponible'}
+                                  </p>
+                                </td>
+                                <td className="px-4 py-3.5">
+                                  <p className="font-semibold tabular-nums text-jr-texte">
+                                    {ligne.index_fin === null ? '—' : formatNombre(ligne.index_fin)}
+                                  </p>
+                                  <p className="mt-1 text-xs text-jr-faible">
+                                    {ligne.date_index_fin ? `Lecture du ${formatDate(ligne.date_index_fin)}` : 'Date de lecture indisponible'}
+                                  </p>
+                                </td>
+                                <td className="whitespace-nowrap px-4 py-3.5 text-right font-semibold tabular-nums text-jr-texte">
+                                  {ligne.consommation_calculee === null
+                                    ? 'Non calculable'
+                                    : valeurAvecUnite(ligne.consommation_calculee, analyse.unite)}
+                                </td>
+                                <td className="px-4 py-3.5">
+                                  <span className={`inline-flex rounded-sm border px-2 py-1 text-xs font-semibold ${calculable ? 'border-jr-ok bg-jr-ok-pale text-jr-ok' : incoherent ? 'border-jr-err bg-jr-err-pale text-jr-err' : 'border-jr-bordure bg-jr-champ text-jr-doux'}`}>
+                                    {libelleEtat}
+                                  </span>
+                                  {!calculable && (
+                                    <p className="mt-1.5 max-w-xs text-xs leading-5 text-jr-faible">
+                                      {ligne.message_calcul}
+                                    </p>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  <div className="border-t border-jr-bordure bg-jr-champ px-5 py-3.5 text-xs leading-5 text-jr-faible sm:px-6">
+                    Seuls les compteurs disposant de deux index datés et cohérents contribuent au total. Une donnée manquante n’est jamais interprétée comme une consommation égale à zéro.
                   </div>
                 </div>
               </section>

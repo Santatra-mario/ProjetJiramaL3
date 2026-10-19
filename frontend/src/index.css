@@ -9,8 +9,11 @@ html {
 body {
   margin: 0;
   min-width: 320px;
-  background-color: #f8fafc;
+  background-color: var(--jr-fond, #f3f7fc);
+  color: var(--jr-texte, #0f172a);
   font-family: Inter, system-ui, sans-serif;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 }
 
 * {
@@ -432,9 +435,50 @@ html.jr-theme-anim *::after {
    variables --jr-* : le mode clair/sombre s'applique partout.
    Migrez-les vers jr-* au fil du temps, puis supprimez le pont.
 ========================================================= */
+body,
 .dark body {
   background-color: var(--jr-fond);
+  color: var(--jr-texte);
 }
+
+/* Fond commun des espaces Admin, Agent, Responsable et authentification.
+   Les accents eau/électricité restent discrets pour laisser la priorité aux données. */
+.jr-page {
+  isolation: isolate;
+  color: var(--jr-texte);
+  background-color: var(--jr-fond);
+  background-image: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--jr-fond-debut) 38%, var(--jr-fond)) 0%,
+    var(--jr-fond) 62%,
+    color-mix(in srgb, var(--jr-fond-fin) 24%, var(--jr-fond)) 100%
+  );
+}
+.jr-page--fixed {
+  background-attachment: fixed;
+}
+.jr-page__motif {
+  z-index: 0;
+  opacity: 0.20;
+}
+.jr-page[data-intensite='vivant'] .jr-page__motif {
+  opacity: 0.28;
+}
+.jr-page__accent {
+  background: radial-gradient(circle, var(--jr-halo-eau) 0%, transparent 70%);
+  opacity: 0.16;
+}
+.dark .jr-page__motif {
+  opacity: 0.14;
+}
+.dark .jr-page[data-intensite='vivant'] .jr-page__motif {
+  opacity: 0.20;
+}
+@media (max-width: 640px) {
+  .jr-page__motif { opacity: 0.11; }
+  .jr-page[data-intensite='vivant'] .jr-page__motif { opacity: 0.15; }
+}
+
 
 /* Surfaces semi-opaques : le fond Jirama reste visible entre les cartes */
 .jr-verre {
@@ -728,4 +772,91 @@ html:not(.dark):has(.jr-palette-jirama) {
 /* ---------- Ajout : tuile claire derrière le logo (clair ET sombre) ---------- */
 :root {
   --jr-logo-fond: #ffffff;
+}
+
+/* =========================================================
+   /IMPECCABLE — HARMONISATION GLOBALE DES ÉCRANS JIRAMA
+   Ces règles raccordent les anciennes classes Tailwind à la palette
+   partagée. Elles s'appliquent aux espaces enveloppés par .jr-admin,
+   sans imposer un style unique au contenu de chaque page.
+========================================================= */
+.jr-admin {
+  color: var(--jr-texte);
+  background: transparent;
+  min-width: 0;
+}
+
+.jr-admin .bg-blue-600,
+.jr-admin .bg-blue-700 {
+  background-color: var(--jr-eau) !important;
+}
+.jr-admin .hover\:bg-blue-700:hover,
+.jr-admin .hover\:bg-blue-800:hover {
+  background-color: var(--jr-eau-fonce) !important;
+}
+.jr-admin .bg-blue-100,
+.jr-admin .bg-cyan-50,
+.jr-admin .bg-sky-100,
+.jr-admin .bg-violet-50 {
+  background-color: var(--jr-eau-pale) !important;
+}
+.jr-admin .hover\:bg-blue-50:hover,
+.jr-admin .hover\:bg-cyan-50:hover,
+.jr-admin .hover\:bg-violet-50:hover {
+  background-color: var(--jr-eau-pale) !important;
+}
+.jr-admin .bg-rose-50,
+.jr-admin .bg-rose-100 {
+  background-color: var(--jr-err-pale) !important;
+}
+.jr-admin .text-blue-800,
+.jr-admin .text-blue-900,
+.jr-admin .text-cyan-700,
+.jr-admin .text-cyan-800,
+.jr-admin .text-violet-700,
+.jr-admin .text-violet-800 {
+  color: var(--jr-lien) !important;
+}
+.jr-admin .text-emerald-800,
+.jr-admin .text-green-700,
+.jr-admin .text-green-800 {
+  color: var(--jr-ok) !important;
+}
+.jr-admin .text-rose-600,
+.jr-admin .text-rose-700,
+.jr-admin .text-rose-800 {
+  color: var(--jr-err) !important;
+}
+.jr-admin .border-blue-100,
+.jr-admin .border-blue-200,
+.jr-admin .border-cyan-200,
+.jr-admin .border-violet-200 {
+  border-color: var(--jr-bordure) !important;
+}
+.jr-admin .border-rose-200,
+.jr-admin .border-rose-300 {
+  border-color: var(--jr-err-bordure) !important;
+}
+
+/* Éviter les débordements transversaux des tableaux et panneaux */
+.jr-admin :is(main, section, article, header, footer, aside) {
+  min-width: 0;
+}
+.jr-admin :is(input, select, textarea) {
+  max-width: 100%;
+}
+
+/* Réduction réelle des mouvements pour toutes les pages */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto !important;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }

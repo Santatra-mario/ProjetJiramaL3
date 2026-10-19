@@ -16,7 +16,6 @@ const {
 const ROLES_NOTIFICATION = [
   'ADMINISTRATEUR',
   'RESPONSABLE',
-  'AGENT',
 ];
 
 // ============================================================
@@ -325,7 +324,8 @@ function buildNotificationMessage(anomalie) {
 // CRÉER UNE NOTIFICATION POUR UNE ANOMALIE
 //
 // Cette fonction crée une notification pour chaque
-// ADMINISTRATEUR et RESPONSABLE actif.
+// ADMINISTRATEUR et RESPONSABLE actif. Les alertes Agent
+// sont générées séparément pour l’auteur du relevé concerné.
 //
 // La vérification se fait par :
 //     anomalie_id + destinataire
@@ -394,7 +394,7 @@ async function createNotificationFromAnomaly(
     }
 
     // --------------------------------------------------------
-    // Récupérer ADMINISTRATEUR + RESPONSABLE + AGENT actifs
+    // Récupérer les administrateurs et responsables actifs
     // --------------------------------------------------------
 
     const usersResult =
@@ -422,7 +422,7 @@ async function createNotificationFromAnomaly(
       usersResult.rowCount === 0
     ) {
       console.warn(
-        'Aucun administrateur, responsable ou agent actif trouvé pour les notifications.'
+        'Aucun administrateur ou responsable actif trouvé pour les notifications.'
       );
 
       return {
@@ -458,29 +458,6 @@ async function createNotificationFromAnomaly(
         );
 
       if (!destinataire) {
-        continue;
-      }
-
-      // ------------------------------------------------------
-      // Respecter une suppression manuelle persistante.
-      // Une notification liée à la même anomalie et au même
-      // destinataire ne doit jamais être recréée après suppression.
-      // La table notification_suppressions est créée par la migration
-      // backend/sql/migration_notification_suppressions.sql.
-      // ------------------------------------------------------
-
-      const suppression = await pool.query(
-        `
-        SELECT 1
-        FROM notification_suppressions
-        WHERE anomalie_id = $1
-          AND LOWER(TRIM(destinataire)) = LOWER(TRIM($2))
-        LIMIT 1
-        `,
-        [anomalieId, destinataire]
-      );
-
-      if (suppression.rowCount > 0) {
         continue;
       }
 
@@ -535,9 +512,10 @@ async function createNotificationFromAnomaly(
           'EN_ATTENTE',
           $5
         )
+        ON CONFLICT DO NOTHING
         `,
         [
-          'ANOMALIE',
+          'ALERTE_ANOMALIE',
           destinataire,
           sujet,
           message,
@@ -757,13 +735,6 @@ async function getAllNotifications(
   try {
 
     // --------------------------------------------------------
-    // IMPORTANT :
-    // synchroniser avant de lire les notifications
-    // --------------------------------------------------------
-
-    await synchronizeAdminNotifications();
-
-    // --------------------------------------------------------
     // Identifier l'utilisateur
     // --------------------------------------------------------
 
@@ -793,8 +764,23 @@ async function getAllNotifications(
       });
     }
 
+    const vueDemandee = String(req.query.vue || 'actives').trim().toLowerCase();
+    if (!['actives', 'archivees'].includes(vueDemandee)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Vue des notifications invalide. Utilisez « actives » ou « archivees ».',
+      });
+    }
+
+    // La synchronisation concerne la liste active, pas la consultation des archives.
+    // Les notifications de l’Agent sont générées séparément et ciblées par auteur.
+    const role = String(identity.role || '').trim().toUpperCase();
+    if (vueDemandee === 'actives' && ROLES_NOTIFICATION.includes(role)) {
+      await synchronizeAdminNotifications();
+    }
+
     // --------------------------------------------------------
-    // Récupérer les notifications personnelles
+    // Récupérer les notifications personnelles visibles
     // --------------------------------------------------------
 
     const result =
@@ -810,6 +796,7 @@ async function getAllNotifications(
           n.statut,
           n.anomalie_id,
           n.created_at,
+          n.archive_le,
 
           a.type_anomalie,
           a.valeur_detectee,
@@ -844,6 +831,11 @@ async function getAllNotifications(
 
         WHERE LOWER(TRIM(n.destinataire))
               = LOWER(TRIM($1))
+          AND n.masquee_le IS NULL
+          AND (
+            ($2::text = 'archivees' AND n.archive_le IS NOT NULL)
+            OR ($2::text = 'actives' AND n.archive_le IS NULL)
+          )
 
         ORDER BY
           CASE
@@ -858,7 +850,7 @@ async function getAllNotifications(
           ) DESC NULLS LAST,
           n.id DESC
         `,
-        [email]
+        [email, vueDemandee]
       );
 
     // --------------------------------------------------------
@@ -1028,6 +1020,8 @@ async function getNotificationById(
         WHERE n.id = $1
           AND LOWER(TRIM(n.destinataire))
               = LOWER(TRIM($2))
+          AND n.masquee_le IS NULL
+          AND n.archive_le IS NULL
 
         LIMIT 1
         `,
@@ -1079,12 +1073,6 @@ async function getNotificationCount(
 ) {
   try {
 
-    // --------------------------------------------------------
-    // Synchroniser avant de compter
-    // --------------------------------------------------------
-
-    await synchronizeAdminNotifications();
-
     const identity =
       await currentNotificationIdentity(
         req
@@ -1103,6 +1091,18 @@ async function getNotificationCount(
         identity.email
       );
 
+    if (!email) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Adresse email utilisateur manquante.',
+      });
+    }
+
+    const role = String(identity.role || '').trim().toUpperCase();
+    if (ROLES_NOTIFICATION.includes(role)) {
+      await synchronizeAdminNotifications();
+    }
+
     const result =
       await pool.query(
         `
@@ -1119,6 +1119,8 @@ async function getNotificationCount(
         FROM notifications
         WHERE LOWER(TRIM(destinataire))
               = LOWER(TRIM($1))
+          AND masquee_le IS NULL
+          AND archive_le IS NULL
         `,
         [email]
       );
@@ -1240,6 +1242,8 @@ async function markNotificationAsRead(
         WHERE id = $1
           AND LOWER(TRIM(destinataire))
               = LOWER(TRIM($2))
+          AND masquee_le IS NULL
+          AND archive_le IS NULL
 
         RETURNING
           id,
@@ -1335,6 +1339,8 @@ async function markAllNotificationsAsRead(
 
         WHERE LOWER(TRIM(destinataire))
               = LOWER(TRIM($1))
+          AND masquee_le IS NULL
+          AND archive_le IS NULL
           AND UPPER(TRIM(statut))
               = 'EN_ATTENTE'
 
@@ -1370,23 +1376,14 @@ async function markAllNotificationsAsRead(
 }
 
 // ============================================================
-// DELETE : SUPPRIMER UNE NOTIFICATION
+// PATCH : ARCHIVER UNE NOTIFICATION
 //
-// DELETE /api/notifications/:id
-//
-// Réservé à l'ADMINISTRATEUR.
-// Pour une notification issue d'une anomalie, enregistrer aussi
-// une suppression persistante afin que la synchronisation ne la
-// recrée pas lors du prochain GET /notifications.
+// PATCH /api/notifications/:id/archiver
+// Réservé au destinataire authentifié selon ses permissions. L'archivage est distinct de la
+// suppression logique : archive_le conserve cette décision séparément.
 // ============================================================
 
-async function deleteNotification(
-  req,
-  res
-) {
-  let client;
-  let transactionStarted = false;
-
+async function archiveNotification(req, res) {
   try {
     const identity = await currentNotificationIdentity(req);
 
@@ -1398,10 +1395,10 @@ async function deleteNotification(
     }
 
     const role = String(identity.role || '').trim().toUpperCase();
-    if (role !== 'ADMINISTRATEUR') {
+    if (!['ADMINISTRATEUR', 'RESPONSABLE', 'AGENT'].includes(role)) {
       return res.status(403).json({
         status: 'error',
-        message: 'Seul un administrateur peut supprimer une notification.',
+        message: 'Votre rôle ne permet pas d’archiver cette notification.',
       });
     }
 
@@ -1421,117 +1418,172 @@ async function deleteNotification(
       });
     }
 
-    client = await pool.connect();
-    await client.query('BEGIN');
-    transactionStarted = true;
-
-    // Ne permettre la suppression que de la notification qui appartient
-    // à l'administrateur connecté, comme dans la liste renvoyée par GET.
-    const found = await client.query(
+    const result = await pool.query(
       `
-      SELECT id, anomalie_id, destinataire
-      FROM notifications
-      WHERE id = $1
-        AND LOWER(TRIM(destinataire)) = LOWER(TRIM($2))
-      FOR UPDATE
+        UPDATE notifications
+        SET archive_le = CURRENT_TIMESTAMP
+        WHERE id = $1
+          AND LOWER(TRIM(destinataire)) = LOWER(TRIM($2))
+          AND masquee_le IS NULL
+          AND archive_le IS NULL
+        RETURNING id, anomalie_id, archive_le
       `,
       [notificationId, email]
     );
 
-    if (found.rowCount === 0) {
-      await client.query('ROLLBACK');
-      transactionStarted = false;
+    if (result.rowCount === 0) {
       return res.status(404).json({
         status: 'error',
-        message: 'Notification introuvable ou non autorisée.',
+        message: 'Notification introuvable, déjà archivée ou non autorisée.',
       });
     }
-
-    const notification = found.rows[0];
-    let deletedIds = [];
-
-    if (notification.anomalie_id !== null && notification.anomalie_id !== undefined) {
-      // Enregistrer la suppression avant de retirer la notification.
-      // La clé est l'anomalie source + le destinataire : les autres rôles
-      // gardent leurs notifications et les nouvelles anomalies ont un autre ID.
-      await client.query(
-        `
-        INSERT INTO notification_suppressions (
-          anomalie_id,
-          destinataire,
-          suppressed_at
-        )
-        VALUES ($1, $2, CURRENT_TIMESTAMP)
-        ON CONFLICT (anomalie_id, destinataire) DO NOTHING
-        `,
-        [notification.anomalie_id, email]
-      );
-
-      // Retirer d'éventuels doublons provenant de la même anomalie pour
-      // ce destinataire. Les autres destinataires ne sont pas affectés.
-      const deleted = await client.query(
-        `
-        DELETE FROM notifications
-        WHERE anomalie_id = $1
-          AND LOWER(TRIM(destinataire)) = LOWER(TRIM($2))
-        RETURNING id
-        `,
-        [notification.anomalie_id, email]
-      );
-      deletedIds = deleted.rows.map((row) => row.id);
-    } else {
-      // Une notification non liée à une anomalie ne peut pas être recréée
-      // par le synchroniseur d'anomalies : une suppression normale suffit.
-      const deleted = await client.query(
-        `
-        DELETE FROM notifications
-        WHERE id = $1
-          AND LOWER(TRIM(destinataire)) = LOWER(TRIM($2))
-        RETURNING id
-        `,
-        [notificationId, email]
-      );
-      deletedIds = deleted.rows.map((row) => row.id);
-    }
-
-    if (deletedIds.length === 0) {
-      await client.query('ROLLBACK');
-      transactionStarted = false;
-      return res.status(404).json({
-        status: 'error',
-        message: 'Notification introuvable ou déjà supprimée.',
-      });
-    }
-
-    await client.query('COMMIT');
-    transactionStarted = false;
 
     return res.status(200).json({
       status: 'success',
-      message: 'Notification supprimée avec succès.',
-      deletedId: notificationId,
-      deletedIds,
-      deletedCount: deletedIds.length,
-      suppressionPersistante: notification.anomalie_id !== null && notification.anomalie_id !== undefined,
+      message: 'Notification archivée avec succès.',
+      notification: result.rows[0],
+      archivePersistante: true,
     });
   } catch (error) {
-    if (client && transactionStarted) {
-      try {
-        await client.query('ROLLBACK');
-      } catch (rollbackError) {
-        console.error('Erreur rollback suppression notification :', rollbackError);
-      }
+    console.error('Erreur archivage notification :', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Impossible d’archiver la notification.',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+}
+
+// ============================================================
+// PATCH : RESTAURER UNE NOTIFICATION ARCHIVÉE
+// PATCH /api/notifications/:id/desarchiver
+// La restauration est personnelle et ne change jamais le statut de lecture.
+// ============================================================
+
+async function restoreNotification(req, res) {
+  try {
+    const identity = await currentNotificationIdentity(req);
+    if (!identity) {
+      return res.status(401).json({ status: 'error', message: 'Utilisateur introuvable.' });
     }
 
-    console.error('Erreur suppression notification :', error);
+    const notificationId = Number(req.params.id);
+    if (!Number.isInteger(notificationId) || notificationId <= 0) {
+      return res.status(400).json({ status: 'error', message: 'Identifiant de notification invalide.' });
+    }
 
+    const email = normalizeEmail(identity.email);
+    if (!email) {
+      return res.status(400).json({ status: 'error', message: 'Adresse email utilisateur manquante.' });
+    }
+
+    const result = await pool.query(
+      `
+        UPDATE notifications
+        SET archive_le = NULL
+        WHERE id = $1
+          AND LOWER(TRIM(destinataire)) = LOWER(TRIM($2))
+          AND masquee_le IS NULL
+          AND archive_le IS NOT NULL
+        RETURNING id, anomalie_id, archive_le, statut, created_at
+      `,
+      [notificationId, email]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Notification archivée introuvable ou non autorisée.',
+      });
+    }
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Notification désarchivée avec succès.',
+      notification: result.rows[0],
+    });
+  } catch (error) {
+    console.error('Erreur restauration notification :', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Impossible de désarchiver la notification.',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+}
+
+// ============================================================
+// DELETE : SUPPRIMER UNE NOTIFICATION
+//
+// DELETE /api/notifications/:id
+//
+// Réservé au destinataire authentifié selon ses permissions.
+// Pour une notification issue d'une anomalie, enregistrer aussi
+// une suppression persistante afin que la synchronisation ne la
+// recrée pas lors du prochain GET /notifications.
+// ============================================================
+
+async function deleteNotification(req, res) {
+  try {
+    const identity = await currentNotificationIdentity(req);
+
+    if (!identity) {
+      return res.status(401).json({
+        status: 'error',
+        message: 'Utilisateur introuvable.',
+      });
+    }
+
+    const notificationId = Number(req.params.id);
+    if (!Number.isInteger(notificationId) || notificationId <= 0) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Identifiant de notification invalide.',
+      });
+    }
+
+    const email = normalizeEmail(identity.email);
+    if (!email) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Adresse email utilisateur manquante.',
+      });
+    }
+
+    // Suppression logique : on conserve l’événement source et l’historique.
+    // Le destinataire ne peut masquer que sa propre notification.
+    const result = await pool.query(
+      `
+        UPDATE notifications
+        SET masquee_le = CURRENT_TIMESTAMP
+        WHERE id = $1
+          AND LOWER(TRIM(destinataire)) = LOWER(TRIM($2))
+          AND masquee_le IS NULL
+        RETURNING id, anomalie_id, masquee_le
+      `,
+      [notificationId, email]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Notification introuvable, déjà masquée ou non autorisée.',
+      });
+    }
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Notification supprimée de votre liste.',
+      notification: result.rows[0],
+      suppressionPersistante: true,
+    });
+  } catch (error) {
+    console.error('Erreur suppression notification :', error);
     return res.status(500).json({
       status: 'error',
       message: 'Impossible de supprimer la notification.',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined,
     });
-  } finally {
-    if (client) client.release();
   }
 }
 
@@ -1545,6 +1597,8 @@ module.exports = {
   getNotificationCount,
   markNotificationAsRead,
   markAllNotificationsAsRead,
+  archiveNotification,
+  restoreNotification,
   deleteNotification,
 
   createNotificationFromAnomaly,

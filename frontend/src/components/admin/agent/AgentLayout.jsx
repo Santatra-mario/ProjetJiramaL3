@@ -19,6 +19,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  Settings,
   TriangleAlert,
   UserCheck,
   Users,
@@ -77,6 +78,12 @@ const menuItems = [
     description: 'Consignes et alertes',
     path: CHEMIN_NOTIFICATIONS,
     icon: Bell,
+  },
+  {
+    label: 'Paramètres',
+    description: 'Notifications archivées',
+    path: '/dashboard/agent/parametres',
+    icon: Settings,
   },
 ];
 

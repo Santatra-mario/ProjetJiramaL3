@@ -24,6 +24,7 @@ import RelevesPage from './pages/admin/RelevesPage.jsx';
 import AnomaliesPage from './pages/admin/AnomaliesPage.jsx';
 import ComparaisonPage from './pages/admin/ComparaisonPage.jsx';
 import NotificationsPage from './pages/admin/NotificationsPage.jsx';
+import NotificationsArchivesPage from './pages/shared/NotificationsArchivesPage.jsx';
 
 // =========================================================
 // AGENT
@@ -295,7 +296,7 @@ function App() {
           path="/dashboard/admin/parametres"
           element={
             <ProtectedRoute role="ADMINISTRATEUR">
-              <AdminSection title="Paramètres" />
+              <NotificationsArchivesPage role="ADMINISTRATEUR" />
             </ProtectedRoute>
           }
         />
@@ -358,6 +359,15 @@ function App() {
           }
         />
 
+        <Route
+          path="/dashboard/agent/parametres"
+          element={
+            <ProtectedRoute role="AGENT">
+              <NotificationsArchivesPage role="AGENT" />
+            </ProtectedRoute>
+          }
+        />
+
         {/* =================================================
             RESPONSABLE
         ================================================= */}
@@ -385,6 +395,15 @@ function App() {
           element={
             <ProtectedRoute role="RESPONSABLE">
               <ResponsableNotificationsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/dashboard/responsable/parametres"
+          element={
+            <ProtectedRoute role="RESPONSABLE">
+              <NotificationsArchivesPage role="RESPONSABLE" />
             </ProtectedRoute>
           }
         />

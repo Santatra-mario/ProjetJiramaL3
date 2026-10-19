@@ -19,6 +19,7 @@ const ANOMALIES_SQL = `(
     x.id,
     x.releve_id,
     r.compteur_id,
+    r.created_by AS created_by,
     x.type_anomalie,
     x.valeur_detectee AS valeur,
     x.valeur_reference,
@@ -256,6 +257,12 @@ async function ensureNotificationsTableImpl() {
       DEFAULT CURRENT_TIMESTAMP
     `,
 
+    `
+      ALTER TABLE notifications
+      ADD COLUMN IF NOT EXISTS
+      masquee_le TIMESTAMP NULL
+    `,
+
   ];
 
 
@@ -287,6 +294,13 @@ async function ensureNotificationsTableImpl() {
     CREATE INDEX IF NOT EXISTS
     idx_notifications_anomalie
     ON notifications(anomalie_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS
+    idx_notifications_visibles
+    ON notifications (LOWER(TRIM(destinataire)))
+    WHERE masquee_le IS NULL
   `);
 }
 
@@ -338,6 +352,7 @@ async function generateAgentNotifications() {
   const agents =
     await pool.query(`
       SELECT
+        id,
         email
 
       FROM users
@@ -368,6 +383,8 @@ async function generateAgentNotifications() {
       SELECT
 
         a.id,
+
+        a.created_by,
 
         a.type_anomalie,
 
@@ -432,6 +449,15 @@ async function generateAgentNotifications() {
       const anomalie of
       anomalies.rows
     ) {
+
+      // Une alerte de relevé doit être adressée à son auteur,
+      // pas à tous les Agents de l’application.
+      if (
+        !anomalie.created_by ||
+        Number(agent.id) !== Number(anomalie.created_by)
+      ) {
+        continue;
+      }
 
       const existing =
         await pool.query(
@@ -533,6 +559,7 @@ async function generateAgentNotifications() {
             'EN_ATTENTE',
             $4
           )
+          ON CONFLICT DO NOTHING
         `,
         [
           email,
@@ -669,6 +696,10 @@ async function getAgentDashboard(
 
           WHERE statut =
             'EN_ATTENTE'
+
+          AND masquee_le IS NULL
+
+          AND archive_le IS NULL
 
           AND LOWER(
             TRIM(destinataire)
@@ -1672,6 +1703,10 @@ async function getAgentNotifications(
 
             a.type_anomalie,
 
+            a.statut AS statut_anomalie,
+
+            a.commentaire AS motif_administrateur,
+
             a.niveau,
 
             a.direction,
@@ -1705,17 +1740,9 @@ async function getAgentNotifications(
           LEFT JOIN abonnes ab
             ON ab.id = c.abonne_id
 
-          WHERE
-
-            LOWER(
-              TRIM(n.destinataire)
-            ) = $1
-
-          OR
-
-            UPPER(
-              TRIM(n.destinataire)
-            ) = 'AGENT'
+          WHERE LOWER(TRIM(n.destinataire)) = $1
+            AND n.masquee_le IS NULL
+            AND n.archive_le IS NULL
 
           ORDER BY
 
@@ -1849,21 +1876,10 @@ async function getAgentNotificationCount(
 
           FROM notifications
 
-          WHERE statut =
-            'EN_ATTENTE'
-
-          AND
-          (
-            LOWER(
-              TRIM(destinataire)
-            ) = $1
-
-            OR
-
-            UPPER(
-              TRIM(destinataire)
-            ) = 'AGENT'
-          )
+          WHERE statut = 'EN_ATTENTE'
+            AND masquee_le IS NULL
+            AND archive_le IS NULL
+            AND LOWER(TRIM(destinataire)) = $1
         `,
         [email]
       );
@@ -1950,19 +1966,9 @@ async function markAgentNotificationAsRead(
               )
 
           WHERE id = $1
-
-          AND
-          (
-            LOWER(
-              TRIM(destinataire)
-            ) = $2
-
-            OR
-
-            UPPER(
-              TRIM(destinataire)
-            ) = 'AGENT'
-          )
+            AND LOWER(TRIM(destinataire)) = $2
+            AND masquee_le IS NULL
+            AND archive_le IS NULL
 
           RETURNING *
         `,
@@ -2047,21 +2053,10 @@ async function markAllAgentNotificationsAsRead(
                 CURRENT_TIMESTAMP
               )
 
-          WHERE statut =
-            'EN_ATTENTE'
-
-          AND
-          (
-            LOWER(
-              TRIM(destinataire)
-            ) = $1
-
-            OR
-
-            UPPER(
-              TRIM(destinataire)
-            ) = 'AGENT'
-          )
+          WHERE statut = 'EN_ATTENTE'
+            AND masquee_le IS NULL
+            AND archive_le IS NULL
+            AND LOWER(TRIM(destinataire)) = $1
         `,
         [email]
       );

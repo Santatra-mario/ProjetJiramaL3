@@ -26,6 +26,37 @@ function levelClass(value) {
   return style[value] || 'border-slate-200 bg-slate-50 text-slate-600';
 }
 
+function normalizeStatus(value) {
+  return String(value ?? '').trim().toUpperCase();
+}
+
+function statusLabel(value) {
+  const labels = {
+    NOUVELLE: 'NOUVELLE',
+    EN_COURS: 'EN COURS',
+    VERIFIEE: 'VÉRIFIÉE',
+    // RESOLUE est conservé comme ancien statut de traitement.
+    RESOLUE: 'Déjà traité par l’Administrateur',
+    TRAITEE: 'Déjà traité par l’Administrateur',
+    REFUSEE: 'Refusé par l’Administrateur',
+  };
+  const status = normalizeStatus(value);
+  return labels[status] || value || '—';
+}
+
+function statusClass(value) {
+  const styles = {
+    NOUVELLE: 'border-red-200 bg-red-50 text-red-700',
+    EN_COURS: 'border-blue-200 bg-blue-50 text-blue-700',
+    VERIFIEE: 'border-slate-200 bg-slate-50 text-slate-700',
+    RESOLUE: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    TRAITEE: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    REFUSEE: 'border-red-200 bg-red-50 text-red-700',
+  };
+  const status = normalizeStatus(value);
+  return styles[status] || 'border-slate-200 bg-slate-50 text-slate-600';
+}
+
 export default function ResponsableAnomaliesPage() {
   const navigate = useNavigate();
   const [data, setData] = useState([]);
@@ -115,6 +146,8 @@ export default function ResponsableAnomaliesPage() {
               <option value="EN_COURS">En cours</option>
               <option value="VERIFIEE">Vérifiée</option>
               <option value="RESOLUE">Résolue</option>
+              <option value="TRAITEE">Déjà traité par l’Administrateur</option>
+              <option value="REFUSEE">Refusé par l’Administrateur</option>
             </select>
           </div>
         </section>
@@ -160,7 +193,23 @@ export default function ResponsableAnomaliesPage() {
                       <td className="px-5 py-4">
                         <span className={`rounded-full border px-2.5 py-1 text-[11px] font-black ${levelClass(item.niveau)}`}>{item.niveau || '—'}</span>
                       </td>
-                      <td className="px-5 py-4 text-slate-600">{item.statut || '—'}</td>
+                      <td className="px-5 py-4 text-slate-600">
+                        <div className="flex min-w-[170px] flex-col items-start gap-2">
+                          <span className={`inline-flex max-w-[280px] whitespace-normal rounded-full border px-2.5 py-1 text-[11px] font-bold leading-tight ${statusClass(item.statut)}`}>
+                            {statusLabel(item.statut)}
+                          </span>
+                          {(item.commentaire?.trim() || ['TRAITEE', 'REFUSEE', 'RESOLUE'].includes(normalizeStatus(item.statut))) ? (
+                            <div className={`max-w-sm rounded-xl border px-3 py-2 text-xs ${normalizeStatus(item.statut) === 'REFUSEE' ? 'border-red-200 bg-red-50 text-red-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
+                              <p className="mb-1 font-bold">Message de l’Administrateur</p>
+                              {item.commentaire?.trim() ? (
+                                <p className="whitespace-pre-wrap break-words">« {item.commentaire.trim()} »</p>
+                              ) : (
+                                <p className="whitespace-pre-wrap break-words">Aucun motif enregistré par l’Administrateur.</p>
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

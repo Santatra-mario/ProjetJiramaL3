@@ -118,31 +118,39 @@ function LevelBadge({
 }
 
 
-function StatusBadge({
-  value,
-}) {
+function normalizeStatus(value) {
+  return String(value ?? '').trim().toUpperCase();
+}
+
+function statusLabel(value) {
+  const labels = {
+    NOUVELLE: 'NOUVELLE',
+    EN_COURS: 'EN COURS',
+    VERIFIEE: 'VÉRIFIÉE',
+    // RESOLUE est conservé comme ancien statut de traitement.
+    RESOLUE: 'Déjà traité par l’Administrateur',
+    TRAITEE: 'Déjà traité par l’Administrateur',
+    REFUSEE: 'Refusé par l’Administrateur',
+  };
+  const status = normalizeStatus(value);
+  return labels[status] || value || '—';
+}
+
+function StatusBadge({ value }) {
+  const style = {
+    NOUVELLE: 'border-red-200 bg-red-50 text-red-700',
+    EN_COURS: 'border-blue-200 bg-blue-50 text-blue-700',
+    VERIFIEE: 'border-slate-200 bg-slate-50 text-slate-700',
+    RESOLUE: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    TRAITEE: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    REFUSEE: 'border-red-200 bg-red-50 text-red-700',
+  };
+  const status = normalizeStatus(value);
 
   return (
-
-    <span
-      className="
-        rounded-full
-        border
-        border-slate-200
-        bg-slate-50
-        px-2.5
-        py-1
-        text-[11px]
-        font-bold
-        text-slate-600
-      "
-    >
-      {
-        value ||
-        '—'
-      }
+    <span className={`inline-flex max-w-[260px] whitespace-normal rounded-full border px-2.5 py-1 text-[11px] font-bold leading-tight ${style[status] || 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+      {statusLabel(status)}
     </span>
-
   );
 }
 
@@ -605,6 +613,14 @@ function AgentAnomaliesPage() {
 
                 <option value="RESOLUE">
                   Résolue
+                </option>
+
+                <option value="TRAITEE">
+                  Déjà traité par l’Administrateur
+                </option>
+
+                <option value="REFUSEE">
+                  Refusé par l’Administrateur
                 </option>
 
               </select>
@@ -1153,12 +1169,19 @@ function AgentAnomaliesPage() {
                           "
                         >
 
-                          <StatusBadge
-                            value={
-                              item.statut
-                            }
-                          />
-
+                          <div className="flex flex-col items-start gap-2">
+                            <StatusBadge value={item.statut} />
+                            {(item.commentaire?.trim() || ['TRAITEE', 'REFUSEE', 'RESOLUE'].includes(normalizeStatus(item.statut))) ? (
+                              <div className={`max-w-xs rounded-xl border px-3 py-2 text-xs ${normalizeStatus(item.statut) === 'REFUSEE' ? 'border-red-200 bg-red-50 text-red-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
+                                <p className="mb-1 font-bold">Message de l’Administrateur</p>
+                                {item.commentaire?.trim() ? (
+                                  <p className="whitespace-pre-wrap break-words">« {item.commentaire.trim()} »</p>
+                                ) : (
+                                  <p className="whitespace-pre-wrap break-words">Aucun motif enregistré par l’Administrateur.</p>
+                                )}
+                              </div>
+                            ) : null}
+                          </div>
                         </td>
 
                       </tr>

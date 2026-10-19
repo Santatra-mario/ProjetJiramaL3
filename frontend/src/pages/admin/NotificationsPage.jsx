@@ -11,6 +11,7 @@ import {
 
 import {
   AlertCircle,
+  Archive,
   Bell,
   Check,
   CheckCircle2,
@@ -34,6 +35,7 @@ import Sidebar from '../../components/admin/Sidebar.jsx';
 import Header from '../../components/admin/Header.jsx';
 
 import AdminShell from '../../components/admin/AdminShell.jsx';
+import NotificationConfirmDialog from '../../components/notifications/NotificationConfirmDialog.jsx';
 
 
 /* =========================================================
@@ -133,14 +135,20 @@ function getStatusClasses(statut) {
 
 
 function getTypeLabel(type) {
-  if (
-    type ===
-    'ALERTE_ANOMALIE'
-  ) {
-    return 'Alerte anomalie';
-  }
-
+  if (type === 'ALERTE_ANOMALIE') return 'Alerte anomalie';
+  if (type === 'DECISION_ANOMALIE') return 'Décision sur anomalie';
   return type || 'Notification';
+}
+
+
+function getDecisionLabel(decision) {
+  const labels = {
+    ACCEPTE: 'Relevé accepté après vérification',
+    REFUSE: 'Relevé refusé',
+    A_VERIFIER: 'Vérification complémentaire nécessaire',
+  };
+  const key = String(decision || '').trim().toUpperCase();
+  return labels[key] || decision || 'Décision non renseignée';
 }
 
 
@@ -148,7 +156,9 @@ function getTypeClasses(type) {
   if (type === 'ALERTE_ANOMALIE') {
     return 'border-[var(--jr-err-bordure)] bg-[var(--jr-err-pale)] text-jr-err';
   }
-
+  if (type === 'DECISION_ANOMALIE') {
+    return 'border-[var(--jr-eau-clair)] bg-[var(--jr-eau-pale)] text-jr-lien';
+  }
   return 'border-[var(--jr-eau-clair)] bg-[var(--jr-eau-pale)] text-jr-lien';
 }
 
@@ -264,13 +274,9 @@ function NotificationsPage() {
   ] = useState('');
 
 
-  // Par défaut, afficher uniquement les notifications à traiter.
-  // Les notifications traitées restent enregistrées et peuvent être consultées
-  // en choisissant explicitement « Traitées » ou « Tous les statuts ».
-  const [
-    statutFilter,
-    setStatutFilter,
-  ] = useState('EN_ATTENTE');
+  // Toutes les notifications actives restent consultables après traitement.
+  const [statutFilter, setStatutFilter] = useState('TOUS');
+  const [archiveView, setArchiveView] = useState('actives');
 
 
   const [
@@ -289,6 +295,8 @@ function NotificationsPage() {
     pendingDelete,
     setPendingDelete,
   ] = useState(null);
+
+  const [pendingArchive, setPendingArchive] = useState(null);
 
   const [
     deletingId,
@@ -455,7 +463,8 @@ function NotificationsPage() {
           // de lancer deux analyses à chaque chargement ou actualisation.
           const response =
             await axiosClient.get(
-              '/notifications'
+              '/notifications',
+              { params: { vue: archiveView } }
             );
 
 
@@ -549,6 +558,7 @@ function NotificationsPage() {
       },
       [
         navigate,
+        archiveView,
       ]
     );
 
@@ -1003,6 +1013,51 @@ function NotificationsPage() {
       setDeletingId(null);
       setActionLoading(false);
     }
+  };
+
+  /* =======================================================
+     ARCHIVER / RESTAURER
+  ======================================================= */
+
+  const changeArchiveState = async (notification, action) => {
+    if (!notification || actionLoading) return false;
+    const isRestore = action === 'desarchiver' || action === 'restaurer';
+    try {
+      setActionLoading(true);
+      setError('');
+      setSuccess('');
+      const endpointAction = action === 'restaurer' ? 'desarchiver' : action;
+      const response = await axiosClient.patch(`/notifications/${notification.id}/${endpointAction}`);
+      if (response.data?.status !== 'success') {
+        throw new Error(response.data?.message || 'Impossible de modifier l’archivage.');
+      }
+      setNotifications((previous) => previous.filter((item) => String(item.id) !== String(notification.id)));
+      if (String(selectedNotification?.id) === String(notification.id)) setSelectedNotification(null);
+      setToast({ type: 'success', message: response.data?.message || (isRestore ? 'Notification restaurée.' : 'Notification archivée.') });
+      return true;
+    } catch (requestError) {
+      const status = requestError.response?.status;
+      if (status === 401 || status === 403) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        navigate('/', { replace: true });
+        return false;
+      }
+      setToast({ type: 'error', message: requestError.response?.data?.message || requestError.message || 'Impossible de modifier l’archivage.' });
+      return false;
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const archiveNotification = (notification) => {
+    if (notification && !actionLoading) setPendingArchive(notification);
+  };
+
+  const confirmArchiveNotification = async () => {
+    if (!pendingArchive || actionLoading) return;
+    const archived = await changeArchiveState(pendingArchive, 'archiver');
+    if (archived) setPendingArchive(null);
   };
 
   /* =======================================================
@@ -1853,6 +1908,14 @@ function NotificationsPage() {
 
             </div>
 
+            <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Vue des notifications">
+              <button type="button" onClick={() => { setArchiveView('actives'); setStatutFilter('TOUS'); }} aria-pressed={archiveView === 'actives'} className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${archiveView === 'actives' ? 'border-blue-700 bg-blue-700 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}>
+                <Bell size={15} /> Notifications actives
+              </button>
+              <button type="button" onClick={() => navigate('/dashboard/admin/parametres?section=notifications-archivees')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-focus motion-reduce:transition-none">
+                <Archive size={15} /> Archives
+              </button>
+            </div>
 
             <div
               className="
@@ -1993,6 +2056,9 @@ function NotificationsPage() {
 
                 <option value="ALERTE_ANOMALIE">
                   Alerte anomalie
+                </option>
+                <option value="DECISION_ANOMALIE">
+                  Décision sur anomalie
                 </option>
 
               </select>
@@ -2200,7 +2266,7 @@ function NotificationsPage() {
                           py-4
                         "
                       >
-                        Compteur / Abonné
+                        Référence client / Abonné
                       </th>
 
                       <th
@@ -2377,10 +2443,9 @@ function NotificationsPage() {
                                       text-slate-500
                                     "
                                   >
-                                    {
-                                      notification.message ||
-                                      'Aucun message.'
-                                    }
+                                    <span className="whitespace-pre-line">
+                                      {notification.message || 'Aucun message.'}
+                                    </span>
                                   </p>
 
                                 </div>
@@ -2693,6 +2758,17 @@ function NotificationsPage() {
 
                                 <button
                                   type="button"
+                                  onClick={() => archiveNotification(notification)}
+                                  disabled={actionLoading}
+                                  className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white p-2 text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+                                  aria-label="Archiver la notification"
+                                  title="Archiver"
+                                >
+                                  <Archive size={15} />
+                                </button>
+
+                                <button
+                                  type="button"
                                   onClick={() =>
                                     deleteNotification(
                                       notification.id
@@ -2782,83 +2858,23 @@ function NotificationsPage() {
         </div>
       )}
 
-      {/* Confirmation de suppression */}
-      {pendingDelete && (
-        <div
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-4"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && deletingId === null) {
-              setPendingDelete(null);
-            }
-          }}
-        >
-          <section
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="delete-notification-title"
-            aria-describedby="delete-notification-description"
-            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-start gap-3">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600">
-                <Trash2 size={21} />
-              </div>
-              <div className="min-w-0 flex-1">
-                <h2 id="delete-notification-title" className="text-lg font-bold text-slate-900">
-                  Confirmer la suppression
-                </h2>
-                <p id="delete-notification-description" className="mt-2 text-sm leading-6 text-slate-600">
-                  Voulez-vous vraiment supprimer cette notification ?
-                </p>
-                {pendingDelete.sujet && (
-                  <p className="mt-2 break-words text-sm font-semibold text-slate-800">
-                    « {pendingDelete.sujet} »
-                  </p>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={() => setPendingDelete(null)}
-                disabled={deletingId !== null}
-                aria-label="Fermer la confirmation"
-                className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
-              >
-                <X size={18} />
-              </button>
-            </div>
+      <NotificationConfirmDialog
+        open={Boolean(pendingArchive)}
+        action="archiver"
+        notification={pendingArchive}
+        loading={actionLoading}
+        onCancel={() => { if (!actionLoading) setPendingArchive(null); }}
+        onConfirm={confirmArchiveNotification}
+      />
 
-            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                onClick={() => setPendingDelete(null)}
-                disabled={deletingId !== null}
-                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Annuler
-              </button>
-              <button
-                type="button"
-                onClick={confirmDeleteNotification}
-                disabled={deletingId !== null}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-red-700 active:bg-red-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {deletingId !== null ? (
-                  <>
-                    <Loader2 size={16} className="animate-spin" />
-                    Suppression...
-                  </>
-                ) : (
-                  <>
-                    <Trash2 size={16} />
-                    Supprimer
-                  </>
-                )}
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
+      <NotificationConfirmDialog
+        open={Boolean(pendingDelete)}
+        action="supprimer"
+        notification={pendingDelete}
+        loading={deletingId !== null}
+        onCancel={() => { if (deletingId === null) setPendingDelete(null); }}
+        onConfirm={confirmDeleteNotification}
+      />
 
       {selectedNotification && (
 
@@ -3228,6 +3244,14 @@ function NotificationsPage() {
               </div>
 
 
+              {selectedNotification.decision_admin && (
+                <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-slate-700">
+                  <p className="font-semibold text-blue-900">Décision de l’Administrateur : {getDecisionLabel(selectedNotification.decision_admin)}</p>
+                  {selectedNotification.motif_decision && <p className="mt-1 whitespace-pre-line">Motif : {selectedNotification.motif_decision}</p>}
+                  {selectedNotification.date_decision && <p className="mt-1 text-xs text-slate-500">Décision enregistrée le {formatDate(selectedNotification.date_decision, true)}</p>}
+                </div>
+              )}
+
               {selectedNotification.anomalie_id && (
 
                 <div
@@ -3294,7 +3318,7 @@ function NotificationsPage() {
                           text-slate-400
                         "
                       >
-                        Compteur
+                        Référence client
                       </p>
 
                       <p

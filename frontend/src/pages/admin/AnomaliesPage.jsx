@@ -233,6 +233,8 @@ function getStatutLabel(
     EN_COURS: 'En cours',
     VERIFIEE: 'Vérifiée',
     RESOLUE: 'Résolue',
+    TRAITEE: 'TRAITÉ',
+    REFUSEE: 'REFUSÉ',
   };
 
   return (
@@ -267,6 +269,12 @@ function getStatutClasses(
   ) {
     return (
       'border-[var(--jr-bordure-forte)] bg-jr-champ text-jr-doux'
+    );
+  }
+
+  if (statut === 'REFUSEE') {
+    return (
+      'border-[var(--jr-err-bordure)] bg-[var(--jr-err-pale)] text-jr-err'
     );
   }
 
@@ -538,6 +546,8 @@ function AnomaliesPage() {
       EN_COURS: 0,
       VERIFIEE: 0,
       RESOLUE: 0,
+      TRAITEE: 0,
+      REFUSEE: 0,
     },
 
     parType: {
@@ -869,6 +879,20 @@ function AnomaliesPage() {
                     ?.parStatut
                     ?.RESOLUE
                 ),
+
+              TRAITEE:
+                toNumber(
+                  response.data
+                    ?.parStatut
+                    ?.TRAITEE
+                ),
+
+              REFUSEE:
+                toNumber(
+                  response.data
+                    ?.parStatut
+                    ?.REFUSEE
+                ),
             },
 
             parType: {
@@ -1044,6 +1068,24 @@ function AnomaliesPage() {
         return;
       }
 
+      const motif = commentaire.trim();
+      if (
+        ['TRAITEE', 'REFUSEE'].includes(selectedStatut) &&
+        !motif
+      ) {
+        setError(
+          selectedStatut === 'REFUSEE'
+            ? 'Veuillez saisir le motif du refus avant de confirmer.'
+            : 'Veuillez saisir le motif de validation avant de confirmer.'
+        );
+        return;
+      }
+
+      if (motif.length > 2000) {
+        setError('Le motif ou commentaire ne doit pas dépasser 2 000 caractères.');
+        return;
+      }
+
       setSaving(
         true
       );
@@ -1077,7 +1119,11 @@ function AnomaliesPage() {
         }
 
         setSuccess(
-          'Le traitement de l’anomalie a été enregistré.'
+          selectedStatut === 'TRAITEE'
+            ? 'Le relevé a été validé. Le statut et le motif ont été enregistrés.'
+            : selectedStatut === 'REFUSEE'
+              ? 'Le relevé a été refusé. Le statut et le motif ont été enregistrés.'
+              : 'Le traitement de l’anomalie a été enregistré.'
         );
 
         closeDetail();
@@ -1387,13 +1433,13 @@ function AnomaliesPage() {
             />
 
             <KpiCard
-              title="Résolues"
+              title="Traitées / résolues"
               value={
-                stats.parStatut
-                  .RESOLUE
+                stats.parStatut.TRAITEE +
+                stats.parStatut.RESOLUE
               }
               subtitle="
-                Anomalies traitées
+                Relevés validés et anomalies résolues
               "
               icon={
                 CheckCircle2
@@ -1676,6 +1722,14 @@ function AnomaliesPage() {
 
                   <option value="RESOLUE">
                     Résolue
+                  </option>
+
+                  <option value="TRAITEE">
+                    Traité / validé
+                  </option>
+
+                  <option value="REFUSEE">
+                    Refusé
                   </option>
                 </select>
               </label>
@@ -2349,13 +2403,25 @@ function AnomaliesPage() {
                         <option value="RESOLUE">
                           Résolue
                         </option>
+
+                        <option value="TRAITEE">
+                          Traiter / valider le relevé
+                        </option>
+
+                        <option value="REFUSEE">
+                          Refuser le relevé
+                        </option>
                       </select>
                     </label>
 
 
                     <label className="mt-4 block">
                       <span className="mb-2 block text-xs font-semibold text-jr-doux">
-                        Commentaire de traitement
+                        {selectedStatut === 'TRAITEE'
+                          ? 'Motif de validation (obligatoire)'
+                          : selectedStatut === 'REFUSEE'
+                            ? 'Motif du refus (obligatoire)'
+                            : 'Commentaire de traitement'}
                       </span>
 
                       <textarea
@@ -2370,10 +2436,13 @@ function AnomaliesPage() {
                             event.target.value
                           )
                         }
-                        placeholder="
-                          Décrivez la vérification,
-                          l’intervention ou la décision...
-                        "
+                        placeholder={selectedStatut === 'TRAITEE'
+                          ? 'Expliquez pourquoi le relevé est validé...'
+                          : selectedStatut === 'REFUSEE'
+                            ? 'Expliquez pourquoi le relevé est refusé et les corrections attendues...'
+                            : 'Décrivez la vérification ou l’intervention...'}
+                        required={['TRAITEE', 'REFUSEE'].includes(selectedStatut)}
+                        maxLength={2000}
                         className="w-full resize-none rounded-md border px-3 py-3 text-sm outline-none jr-field"
                       />
                     </label>

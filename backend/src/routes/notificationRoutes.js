@@ -7,6 +7,8 @@ const {
   getNotificationCount,
   markNotificationAsRead,
   markAllNotificationsAsRead,
+  archiveNotification,
+  restoreNotification,
   deleteNotification,
 } = require('../controllers/notificationController');
 
@@ -23,6 +25,8 @@ router.get('/count', verifyToken, checkRole(...roles), getNotificationCount);
 router.patch('/lire-tout', verifyToken, checkRole(...roles), markAllNotificationsAsRead);
 router.get('/:id', verifyToken, checkRole(...roles), getNotificationById);
 router.patch('/:id/lue', verifyToken, checkRole(...roles), markNotificationAsRead);
-router.delete('/:id', verifyToken, checkRole('ADMINISTRATEUR'), deleteNotification);
+router.patch('/:id/archiver', verifyToken, checkRole(...roles), archiveNotification);
+router.patch('/:id/desarchiver', verifyToken, checkRole(...roles), restoreNotification);
+router.delete('/:id', verifyToken, checkRole(...roles), deleteNotification);
 
 module.exports = router;

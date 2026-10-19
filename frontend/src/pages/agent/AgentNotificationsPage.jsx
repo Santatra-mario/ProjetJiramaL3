@@ -9,9 +9,11 @@ import {
 } from 'react-router-dom';
 
 import {
+  Archive,
   Bell,
   CheckCheck,
   Clock3,
+  Trash2,
   TriangleAlert,
   X,
 } from 'lucide-react';
@@ -19,6 +21,8 @@ import {
 import axiosClient from "../../api/axiosClient";
 
 import AgentLayout from "../../components/admin/agent/AgentLayout";
+import NotificationConfirmDialog from '../../components/notifications/NotificationConfirmDialog.jsx';
+import { signalerChangementNotifications } from '../../components/admin/agent/notificationsAgent.js';
 
 
 function formatDateTime(
@@ -50,6 +54,54 @@ function formatDateTime(
       );
 }
 
+
+function normalizeDecisionStatus(value) {
+  return String(value || '')
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[\s-]+/g, '_');
+}
+
+function getAdminDecision(notification) {
+  const status = normalizeDecisionStatus(notification.statut_anomalie);
+  const motif = String(
+    notification.motif_administrateur ??
+    notification.commentaire_anomalie ??
+    ''
+  ).trim();
+
+  if (['REFUSEE', 'REFUSE', 'REJETEE', 'REJETE'].includes(status)) {
+    return {
+      type: 'refusee',
+      label: 'Refusé par l’Administrateur',
+      motif,
+    };
+  }
+
+  if (['TRAITEE', 'TRAITE', 'RESOLUE', 'RESOLU', 'VALIDEE', 'VALIDE'].includes(status)) {
+    return {
+      type: 'traitee',
+      label: 'Déjà traité par l’Administrateur',
+      motif,
+    };
+  }
+
+  return null;
+}
+
+function decisionBadgeClass(decision) {
+  return decision?.type === 'refusee'
+    ? 'border-red-200 bg-red-50 text-red-700'
+    : 'border-emerald-200 bg-emerald-50 text-emerald-700';
+}
+
+function decisionMessageClass(decision) {
+  return decision?.type === 'refusee'
+    ? 'border-red-200 bg-red-50/80 text-red-800'
+    : 'border-emerald-200 bg-emerald-50/80 text-emerald-800';
+}
 
 function AgentNotificationsPage() {
 
@@ -83,6 +135,10 @@ function AgentNotificationsPage() {
     setError,
   ] =
     useState('');
+
+  const [success, setSuccess] = useState('');
+  const [pendingAction, setPendingAction] = useState(null);
+  const [actionBusy, setActionBusy] = useState(false);
 
 
   async function loadNotifications() {
@@ -230,6 +286,7 @@ function AgentNotificationsPage() {
                 : item
           )
       );
+      signalerChangementNotifications({ source: 'lecture', id });
 
     } catch (
       requestError
@@ -257,6 +314,56 @@ function AgentNotificationsPage() {
 
   }
 
+
+  function requestNotificationAction(notification, action) {
+    if (!notification || actionBusy) return;
+    setError('');
+    setSuccess('');
+    setPendingAction({ notification, action });
+  }
+
+  async function confirmNotificationAction() {
+    if (!pendingAction || actionBusy) return;
+    const { notification, action } = pendingAction;
+    const id = notification.id;
+
+    try {
+      setActionBusy(true);
+      setError('');
+      setSuccess('');
+
+      const response = action === 'archiver'
+        ? await axiosClient.patch(`/notifications/${id}/archiver`)
+        : await axiosClient.delete(`/notifications/${id}`);
+
+      if (response.data?.status !== 'success') {
+        throw new Error(response.data?.message || 'L’opération sur la notification a échoué.');
+      }
+
+      setNotifications((previous) => previous.filter((item) => String(item.id) !== String(id)));
+      signalerChangementNotifications({ source: action, id });
+      setPendingAction(null);
+      setSuccess(response.data?.message || (action === 'archiver'
+        ? 'Notification archivée. Vous pourrez la restaurer depuis les paramètres.'
+        : 'Notification supprimée de votre liste.'));
+    } catch (requestError) {
+      console.error('Erreur opération notification Agent :', requestError);
+      if ([401, 403].includes(requestError.response?.status)) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        navigate('/', { replace: true });
+        return;
+      }
+      setPendingAction(null);
+      setError(
+        requestError.response?.data?.message ||
+        requestError.message ||
+        'Impossible de modifier cette notification.'
+      );
+    } finally {
+      setActionBusy(false);
+    }
+  }
 
   async function markAllAsRead() {
 
@@ -299,6 +406,7 @@ function AgentNotificationsPage() {
             })
           )
       );
+      signalerChangementNotifications({ source: 'lecture-globale' });
 
     } catch (
       requestError
@@ -429,6 +537,15 @@ function AgentNotificationsPage() {
 
               <button
                 type="button"
+                onClick={() => navigate('/dashboard/agent/parametres?section=notifications-archivees')}
+                className="inline-flex items-center gap-2 rounded-xl border border-jr-bordure-forte bg-jr-surface px-4 py-3 text-sm font-semibold text-jr-texte transition-colors hover:bg-jr-champ focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-focus motion-reduce:transition-none"
+              >
+                <Archive size={17} />
+                Archives
+              </button>
+
+              <button
+                type="button"
                 onClick={
                   markAllAsRead
                 }
@@ -504,6 +621,12 @@ function AgentNotificationsPage() {
 
         )}
 
+
+        {success && (
+          <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
+            {success}
+          </div>
+        )}
 
         <section
           className="
@@ -598,6 +721,7 @@ function AgentNotificationsPage() {
                   notification.statut ===
                   'EN_ATTENTE';
 
+                const decision = getAdminDecision(notification);
 
                 return (
 
@@ -700,23 +824,19 @@ function AgentNotificationsPage() {
                           </h3>
 
 
-                          {unreadItem && (
-
+                          {decision ? (
                             <span
-                              className="
-                                rounded-full
-                                bg-red-500
-                                px-2.5
-                                py-1
-                                text-[10px]
-                                font-bold
-                                text-white
-                              "
+                              className={`inline-flex items-center rounded-full border px-3 py-1 text-[10px] font-extrabold ${decisionBadgeClass(decision)}`}
+                            >
+                              {decision.label}
+                            </span>
+                          ) : unreadItem ? (
+                            <span
+                              className="rounded-full bg-red-500 px-2.5 py-1 text-[10px] font-bold text-white"
                             >
                               NOUVELLE
                             </span>
-
-                          )}
+                          ) : null}
 
                         </div>
 
@@ -734,6 +854,16 @@ function AgentNotificationsPage() {
                           }
                         </p>
 
+                        {decision && (
+                          <div className={`mt-4 rounded-2xl border p-4 ${decisionMessageClass(decision)}`}>
+                            <p className="text-xs font-extrabold uppercase tracking-wide">
+                              Message de l’Administrateur
+                            </p>
+                            <p className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-6">
+                              {decision.motif || 'Aucun motif enregistré par l’Administrateur.'}
+                            </p>
+                          </div>
+                        )}
 
                         <div
                           className="
@@ -817,45 +947,41 @@ function AgentNotificationsPage() {
                       </div>
 
 
-                      {unreadItem && (
-
+                      <div className="flex shrink-0 flex-wrap gap-2 lg:flex-col">
+                        {unreadItem && (
+                          <button
+                            type="button"
+                            onClick={() => markAsRead(notification.id)}
+                            disabled={processing || actionBusy}
+                            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-jr-eau px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-jr-eau-fonce disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
+                          >
+                            <CheckCheck size={16} />
+                            Marquer lue
+                          </button>
+                        )}
                         <button
                           type="button"
-                          onClick={() =>
-                            markAsRead(
-                              notification.id
-                            )
-                          }
-                          disabled={
-                            processing
-                          }
-                          className="
-                            inline-flex
-                            shrink-0
-                            items-center
-                            justify-center
-                            gap-2
-                            rounded-2xl
-                            bg-slate-900
-                            px-4
-                            py-3
-                            text-sm
-                            font-bold
-                            text-white
-                            hover:bg-slate-800
-                            disabled:opacity-50
-                          "
+                          onClick={() => requestNotificationAction(notification, 'archiver')}
+                          disabled={actionBusy || processing}
+                          aria-label={`Archiver la notification ${notification.sujet || notification.id}`}
+                          title="Archiver"
+                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-jr-bordure-forte bg-jr-surface px-3 py-2 text-sm font-semibold text-jr-texte transition-colors hover:bg-jr-champ disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
                         >
-
-                          <CheckCheck
-                            size={17}
-                          />
-
-                          Marquer lue
-
+                          <Archive size={16} />
+                          Archiver
                         </button>
-
-                      )}
+                        <button
+                          type="button"
+                          onClick={() => requestNotificationAction(notification, 'supprimer')}
+                          disabled={actionBusy || processing}
+                          aria-label={`Supprimer la notification ${notification.sujet || notification.id}`}
+                          title="Supprimer"
+                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-jr-err-bordure bg-jr-err-pale px-3 py-2 text-sm font-semibold text-jr-err transition-colors hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
+                        >
+                          <Trash2 size={16} />
+                          Supprimer
+                        </button>
+                      </div>
 
                     </div>
 
@@ -871,6 +997,15 @@ function AgentNotificationsPage() {
         </section>
 
       </div>
+
+      <NotificationConfirmDialog
+        open={Boolean(pendingAction)}
+        action={pendingAction?.action || 'archiver'}
+        notification={pendingAction?.notification}
+        loading={actionBusy}
+        onCancel={() => { if (!actionBusy) setPendingAction(null); }}
+        onConfirm={confirmNotificationAction}
+      />
 
     </AgentLayout>
 

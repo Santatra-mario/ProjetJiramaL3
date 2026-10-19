@@ -164,7 +164,12 @@ function Sidebar({
           <button
             type="button"
             onClick={() => handleNavigate('/dashboard/admin/parametres')}
-            className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-jr-doux transition hover:bg-jr-eau-pale hover:text-jr-lien focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-elec"
+            aria-current={activePath === '/dashboard/admin/parametres' ? 'page' : undefined}
+            className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-elec ${
+              activePath === '/dashboard/admin/parametres'
+                ? 'bg-jr-eau text-white'
+                : 'text-jr-doux hover:bg-jr-eau-pale hover:text-jr-lien'
+            }`}
           >
             <Settings size={20} aria-hidden="true" />
             Paramètres

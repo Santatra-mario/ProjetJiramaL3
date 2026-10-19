@@ -1,9 +1,7 @@
 const pool = require('../config/db');
 
 const ROLES_NOTIFICATION = [
-  'ADMINISTRATEUR',
   'RESPONSABLE',
-  'AGENT',
 ];
 
 const ANOMALIES_SQL = `
@@ -139,6 +137,17 @@ async function ensureNotificationsTable() {
     CREATE INDEX IF NOT EXISTS idx_notifications_anomalie
     ON notifications(anomalie_id)
   `);
+
+  await pool.query(`
+    ALTER TABLE notifications
+    ADD COLUMN IF NOT EXISTS masquee_le TIMESTAMP NULL
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_notifications_visibles
+    ON notifications (LOWER(TRIM(destinataire)))
+    WHERE masquee_le IS NULL
+  `);
 }
 
 function buildNotificationSubject(row) {
@@ -248,14 +257,15 @@ async function synchronizeNotificationsForAnomalies() {
             anomalie_id
           )
           VALUES (
-            'ANOMALIE',
+            'ALERTE_ANOMALIE',
             $1,
             $2,
             $3,
-            CURRENT_TIMESTAMP,
+            NULL,
             'EN_ATTENTE',
             $4
           )
+          ON CONFLICT DO NOTHING
         `,
         [email, sujet, message, anomalie.id]
       );
@@ -351,6 +361,8 @@ async function getResponsableDashboard(req, res) {
             SELECT COUNT(*)::int
             FROM notifications n
             WHERE LOWER(TRIM(n.destinataire)) = $1
+              AND n.masquee_le IS NULL
+              AND n.archive_le IS NULL
               AND UPPER(TRIM(n.statut)) = 'EN_ATTENTE'
           ) AS notifications_non_lues
       `, [email]),
@@ -438,6 +450,8 @@ async function getResponsableDashboard(req, res) {
             created_at
           FROM notifications
           WHERE LOWER(TRIM(destinataire)) = $1
+            AND masquee_le IS NULL
+            AND archive_le IS NULL
           ORDER BY created_at DESC, id DESC
           LIMIT 8
         `,
@@ -523,17 +537,23 @@ async function getResponsableNotifications(req, res) {
     const result = await pool.query(
       `
         SELECT
-          id,
-          type,
-          sujet,
-          message,
-          statut,
-          date_envoi,
-          anomalie_id,
-          created_at
-        FROM notifications
-        WHERE LOWER(TRIM(destinataire)) = $1
-        ORDER BY created_at DESC, id DESC
+          n.id,
+          n.type,
+          n.sujet,
+          n.message,
+          n.statut,
+          n.date_envoi,
+          n.anomalie_id,
+          n.created_at,
+          a.statut AS statut_anomalie,
+          a.commentaire AS motif_administrateur
+        FROM notifications n
+        LEFT JOIN anomalies a
+          ON a.id = n.anomalie_id
+        WHERE LOWER(TRIM(n.destinataire)) = $1
+          AND n.masquee_le IS NULL
+          AND n.archive_le IS NULL
+        ORDER BY n.created_at DESC, n.id DESC
       `,
       [email]
     );
@@ -569,6 +589,8 @@ async function getResponsableNotificationCount(req, res) {
         SELECT COUNT(*)::int AS total
         FROM notifications
         WHERE LOWER(TRIM(destinataire)) = $1
+          AND masquee_le IS NULL
+          AND archive_le IS NULL
           AND UPPER(TRIM(statut)) = 'EN_ATTENTE'
       `,
       [normalizeEmail(user.email)]
@@ -614,6 +636,8 @@ async function markResponsableNotificationAsRead(req, res) {
           date_envoi = CURRENT_TIMESTAMP
         WHERE id = $1
           AND LOWER(TRIM(destinataire)) = $2
+          AND masquee_le IS NULL
+          AND archive_le IS NULL
         RETURNING id, statut, date_envoi
       `,
       [id, normalizeEmail(user.email)]
@@ -657,6 +681,8 @@ async function markAllResponsableNotificationsAsRead(req, res) {
           statut = 'ENVOYE',
           date_envoi = CURRENT_TIMESTAMP
         WHERE LOWER(TRIM(destinataire)) = $1
+          AND masquee_le IS NULL
+          AND archive_le IS NULL
           AND UPPER(TRIM(statut)) = 'EN_ATTENTE'
       `,
       [normalizeEmail(user.email)]
@@ -690,6 +716,7 @@ async function getResponsableAnomalies(req, res) {
         a.niveau,
         a.direction,
         a.statut,
+        a.commentaire,
         c.id AS compteur_id,
         c.numero_compteur,
         c.type AS type_compteur,

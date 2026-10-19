@@ -8,6 +8,7 @@ const router =
 
 const {
   getComparaison,
+  getDatesDisponibles,
 } =
   require(
     '../controllers/comparaisonController'
@@ -26,6 +27,14 @@ const {
 /* =========================================================
    COMPARAISON DES CONSOMMATIONS
 ========================================================= */
+
+// Liste des dates réellement présentes dans la base pour le type/compteur choisi.
+router.get(
+  '/dates-disponibles',
+  verifyToken,
+  checkRole('ADMINISTRATEUR', 'RESPONSABLE'),
+  getDatesDisponibles
+);
 
 router.get(
 

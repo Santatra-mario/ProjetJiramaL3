@@ -6,14 +6,18 @@ import {
 
 import {
   AlertTriangle,
+  Archive,
   Bell,
   CheckCheck,
   RefreshCw,
+  Trash2,
 } from 'lucide-react';
 
 import { useNavigate } from 'react-router-dom';
 import axiosClient from "../../api/axiosClient";
 import ResponsableLayout from "../../components/admin/responsable/ResponsableLayout";
+import NotificationConfirmDialog from '../../components/notifications/NotificationConfirmDialog.jsx';
+import { signalerChangementNotificationsResponsable } from '../../components/admin/responsable/notificationsResponsable.js';
 
 function formatDateTime(value) {
   if (!value) return '—';
@@ -26,6 +30,54 @@ function formatDateTime(value) {
       });
 }
 
+function normalizeDecisionStatus(value) {
+  return String(value || '')
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[\s-]+/g, '_');
+}
+
+function getAdminDecision(notification) {
+  const status = normalizeDecisionStatus(notification.statut_anomalie);
+  const motif = String(
+    notification.motif_administrateur ??
+    notification.commentaire_anomalie ??
+    ''
+  ).trim();
+
+  if (['REFUSEE', 'REFUSE', 'REJETEE', 'REJETE'].includes(status)) {
+    return {
+      type: 'refusee',
+      label: 'Refusé par l’Administrateur',
+      motif,
+    };
+  }
+
+  if (['TRAITEE', 'TRAITE', 'RESOLUE', 'RESOLU', 'VALIDEE', 'VALIDE'].includes(status)) {
+    return {
+      type: 'traitee',
+      label: 'Déjà traité par l’Administrateur',
+      motif,
+    };
+  }
+
+  return null;
+}
+
+function decisionBadgeClass(decision) {
+  return decision?.type === 'refusee'
+    ? 'border-red-200 bg-red-50 text-red-700'
+    : 'border-emerald-200 bg-emerald-50 text-emerald-700';
+}
+
+function decisionMessageClass(decision) {
+  return decision?.type === 'refusee'
+    ? 'border-red-200 bg-red-50/80 text-red-800'
+    : 'border-emerald-200 bg-emerald-50/80 text-emerald-800';
+}
+
 export default function ResponsableNotificationsPage() {
   const navigate = useNavigate();
   const [notifications, setNotifications] = useState([]);
@@ -33,6 +85,9 @@ export default function ResponsableNotificationsPage() {
   const [processing, setProcessing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [pendingAction, setPendingAction] = useState(null);
+  const [actionBusy, setActionBusy] = useState(false);
 
   async function loadNotifications(refresh = false) {
     try {
@@ -92,6 +147,7 @@ export default function ResponsableNotificationsPage() {
     try {
       setProcessing(true);
       await axiosClient.patch(`/responsable/notifications/${id}/lue`);
+      signalerChangementNotificationsResponsable({ source: 'lecture', id });
       await loadNotifications(true);
     } catch (requestError) {
       console.error('Erreur lecture notification :', requestError);
@@ -104,12 +160,62 @@ export default function ResponsableNotificationsPage() {
     }
   }
 
+  function requestNotificationAction(notification, action) {
+    if (!notification || actionBusy || processing) return;
+    setError('');
+    setSuccess('');
+    setPendingAction({ notification, action });
+  }
+
+  async function confirmNotificationAction() {
+    if (!pendingAction || actionBusy) return;
+    const { notification, action } = pendingAction;
+    const id = notification.id;
+
+    try {
+      setActionBusy(true);
+      setError('');
+      setSuccess('');
+      const response = action === 'archiver'
+        ? await axiosClient.patch(`/notifications/${id}/archiver`)
+        : await axiosClient.delete(`/notifications/${id}`);
+
+      if (response.data?.status !== 'success') {
+        throw new Error(response.data?.message || 'L’opération sur la notification a échoué.');
+      }
+
+      setNotifications((previous) => previous.filter((item) => String(item.id) !== String(id)));
+      signalerChangementNotificationsResponsable({ source: action, id });
+      setPendingAction(null);
+      setSuccess(response.data?.message || (action === 'archiver'
+        ? 'Notification archivée. Vous pourrez la restaurer depuis les paramètres.'
+        : 'Notification supprimée de votre liste.'));
+    } catch (requestError) {
+      console.error('Erreur opération notification Responsable :', requestError);
+      if ([401, 403].includes(requestError.response?.status)) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        navigate('/', { replace: true });
+        return;
+      }
+      setPendingAction(null);
+      setError(
+        requestError.response?.data?.message ||
+        requestError.message ||
+        'Impossible de modifier cette notification.'
+      );
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
   async function markAllAsRead() {
     if (unread.length === 0) return;
 
     try {
       setProcessing(true);
       await axiosClient.patch('/responsable/notifications/lire-tout');
+      signalerChangementNotificationsResponsable({ source: 'lecture-globale' });
       await loadNotifications(true);
     } catch (requestError) {
       console.error('Erreur lecture globale :', requestError);
@@ -145,6 +251,14 @@ export default function ResponsableNotificationsPage() {
               </span>
               <button
                 type="button"
+                onClick={() => navigate('/dashboard/responsable/parametres?section=notifications-archivees')}
+                className="inline-flex items-center gap-2 rounded-lg border border-jr-bordure-forte bg-jr-surface px-4 py-3 text-sm font-semibold text-jr-texte transition-colors hover:bg-jr-champ focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-focus motion-reduce:transition-none"
+              >
+                <Archive size={17} />
+                Archives
+              </button>
+              <button
+                type="button"
                 onClick={() => loadNotifications(true)}
                 disabled={refreshing}
                 className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
@@ -171,6 +285,12 @@ export default function ResponsableNotificationsPage() {
           </div>
         )}
 
+        {success && (
+          <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
+            {success}
+          </div>
+        )}
+
         {loading ? (
           <div className="rounded-3xl border border-slate-200 bg-white p-12 text-center text-slate-500 shadow-sm">
             Chargement des notifications...
@@ -190,6 +310,7 @@ export default function ResponsableNotificationsPage() {
             {notifications.map((notification) => {
               const unreadItem =
                 String(notification.statut || '').toUpperCase() === 'EN_ATTENTE';
+              const decision = getAdminDecision(notification);
 
               return (
                 <article
@@ -216,20 +337,40 @@ export default function ResponsableNotificationsPage() {
                           </p>
                         </div>
 
-                        <span
-                          className={`w-fit rounded-full border px-3 py-1 text-[11px] font-black ${
-                            unreadItem
-                              ? 'border-amber-200 bg-amber-50 text-amber-700'
-                              : 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                          }`}
-                        >
-                          {unreadItem ? 'Non lue' : 'Lue'}
-                        </span>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {decision && (
+                            <span
+                              className={`w-fit rounded-full border px-3 py-1 text-[11px] font-black ${decisionBadgeClass(decision)}`}
+                            >
+                              {decision.label}
+                            </span>
+                          )}
+                          <span
+                            className={`w-fit rounded-full border px-3 py-1 text-[11px] font-black ${
+                              unreadItem
+                                ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                : 'border-slate-200 bg-slate-50 text-slate-600'
+                            }`}
+                          >
+                            {unreadItem ? 'Non lue' : 'Lue'}
+                          </span>
+                        </div>
                       </div>
 
                       <p className="mt-4 text-sm leading-6 text-slate-700">
                         {notification.message || 'Notification de supervision.'}
                       </p>
+
+                      {decision && (
+                        <div className={`mt-4 rounded-2xl border p-4 ${decisionMessageClass(decision)}`}>
+                          <p className="text-xs font-extrabold uppercase tracking-wide">
+                            Message de l’Administrateur
+                          </p>
+                          <p className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-6">
+                            {decision.motif || 'Aucun motif enregistré par l’Administrateur.'}
+                          </p>
+                        </div>
+                      )}
 
                       {notification.anomalie_id && (
                         <p className="mt-3 text-xs font-semibold text-slate-400">
@@ -237,16 +378,37 @@ export default function ResponsableNotificationsPage() {
                         </p>
                       )}
 
-                      {unreadItem && (
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {unreadItem && (
+                          <button
+                            type="button"
+                            onClick={() => markAsRead(notification.id)}
+                            disabled={processing || actionBusy}
+                            className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-jr-eau px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-jr-eau-fonce disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
+                          >
+                            <CheckCheck size={16} />
+                            Marquer comme lue
+                          </button>
+                        )}
                         <button
                           type="button"
-                          onClick={() => markAsRead(notification.id)}
-                          disabled={processing}
-                          className="mt-4 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-50"
+                          onClick={() => requestNotificationAction(notification, 'archiver')}
+                          disabled={processing || actionBusy}
+                          aria-label={`Archiver la notification ${notification.sujet || notification.id}`}
+                          className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-jr-bordure-forte bg-jr-surface px-3 py-2 text-sm font-semibold text-jr-texte transition-colors hover:bg-jr-champ disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
                         >
-                          Marquer comme lue
+                          <Archive size={16} /> Archiver
                         </button>
-                      )}
+                        <button
+                          type="button"
+                          onClick={() => requestNotificationAction(notification, 'supprimer')}
+                          disabled={processing || actionBusy}
+                          aria-label={`Supprimer la notification ${notification.sujet || notification.id}`}
+                          className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-jr-err-bordure bg-jr-err-pale px-3 py-2 text-sm font-semibold text-jr-err transition-colors hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
+                        >
+                          <Trash2 size={16} /> Supprimer
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </article>
@@ -255,6 +417,14 @@ export default function ResponsableNotificationsPage() {
           </div>
         )}
       </div>
+      <NotificationConfirmDialog
+        open={Boolean(pendingAction)}
+        action={pendingAction?.action || 'archiver'}
+        notification={pendingAction?.notification}
+        loading={actionBusy}
+        onCancel={() => { if (!actionBusy) setPendingAction(null); }}
+        onConfirm={confirmNotificationAction}
+      />
     </ResponsableLayout>
   );
 }

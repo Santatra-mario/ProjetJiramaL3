@@ -17,6 +17,14 @@ const STATUTS = [
   'EN_COURS',
   'VERIFIEE',
   'RESOLUE',
+  'TRAITEE',
+  'REFUSEE',
+];
+
+// Une décision finale de l’Administrateur doit toujours être justifiée.
+const STATUTS_AVEC_MOTIF_OBLIGATOIRE = [
+  'TRAITEE',
+  'REFUSEE',
 ];
 
 /*
@@ -1348,6 +1356,8 @@ async function getAnomalieStats(req, res) {
       EN_COURS: 0,
       VERIFIEE: 0,
       RESOLUE: 0,
+      TRAITEE: 0,
+      REFUSEE: 0,
     };
 
     statutResult.rows.forEach(row => {
@@ -1846,12 +1856,10 @@ async function updateAnomalieStatut(
     );
 
   const commentaire =
-    req.body?.commentaire !==
-    undefined
-      ? String(
-          req.body.commentaire
-        ).trim()
-      : null;
+    req.body?.commentaire !== undefined &&
+    req.body?.commentaire !== null
+      ? String(req.body.commentaire).trim()
+      : '';
 
   if (
     !Number.isInteger(id) ||
@@ -1879,6 +1887,25 @@ async function updateAnomalieStatut(
 
       message:
         `Statut invalide. Valeurs autorisées : ${STATUTS.join(', ')}.`,
+    });
+  }
+
+  if (
+    STATUTS_AVEC_MOTIF_OBLIGATOIRE.includes(statut) &&
+    !commentaire
+  ) {
+    return res.status(400).json({
+      status: 'error',
+      message: statut === 'REFUSEE'
+        ? 'Le motif du refus est obligatoire.'
+        : 'Le motif de validation est obligatoire.',
+    });
+  }
+
+  if (commentaire && commentaire.length > 2000) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'Le motif ou commentaire ne doit pas dépasser 2 000 caractères.',
     });
   }
 
@@ -1910,7 +1937,7 @@ async function updateAnomalieStatut(
         `,
         [
           statut,
-          commentaire,
+          commentaire || null,
           id,
         ]
       );
