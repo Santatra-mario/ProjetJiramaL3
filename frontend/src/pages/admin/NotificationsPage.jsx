@@ -12,6 +12,7 @@ import {
 import {
   AlertCircle,
   Archive,
+  ArchiveRestore,
   Bell,
   Check,
   CheckCircle2,
@@ -295,7 +296,6 @@ function NotificationsPage() {
     pendingDelete,
     setPendingDelete,
   ] = useState(null);
-
   const [pendingArchive, setPendingArchive] = useState(null);
 
   const [
@@ -1020,17 +1020,14 @@ function NotificationsPage() {
   ======================================================= */
 
   const changeArchiveState = async (notification, action) => {
-    if (!notification || actionLoading) return false;
-    const isRestore = action === 'desarchiver' || action === 'restaurer';
+    if (!notification || actionLoading) return;
+    const isRestore = action === 'restaurer';
     try {
       setActionLoading(true);
       setError('');
       setSuccess('');
-      const endpointAction = action === 'restaurer' ? 'desarchiver' : action;
-      const response = await axiosClient.patch(`/notifications/${notification.id}/${endpointAction}`);
-      if (response.data?.status !== 'success') {
-        throw new Error(response.data?.message || 'Impossible de modifier l’archivage.');
-      }
+      const response = await axiosClient.patch(`/notifications/${notification.id}/${action}`);
+      if (response.data?.status !== 'success') throw new Error(response.data?.message || 'Impossible de modifier l’archivage.');
       setNotifications((previous) => previous.filter((item) => String(item.id) !== String(notification.id)));
       if (String(selectedNotification?.id) === String(notification.id)) setSelectedNotification(null);
       setToast({ type: 'success', message: response.data?.message || (isRestore ? 'Notification restaurée.' : 'Notification archivée.') });
@@ -1045,20 +1042,16 @@ function NotificationsPage() {
       }
       setToast({ type: 'error', message: requestError.response?.data?.message || requestError.message || 'Impossible de modifier l’archivage.' });
       return false;
-    } finally {
-      setActionLoading(false);
-    }
+    } finally { setActionLoading(false); }
   };
 
-  const archiveNotification = (notification) => {
-    if (notification && !actionLoading) setPendingArchive(notification);
-  };
-
-  const confirmArchiveNotification = async () => {
+  const archiveNotification = (notification) => setPendingArchive(notification);
+  const confirmerArchivage = async () => {
     if (!pendingArchive || actionLoading) return;
-    const archived = await changeArchiveState(pendingArchive, 'archiver');
-    if (archived) setPendingArchive(null);
+    const ok = await changeArchiveState(pendingArchive, 'archiver');
+    if (ok) setPendingArchive(null);
   };
+  const restoreNotification = (notification) => changeArchiveState(notification, 'restaurer');
 
   /* =======================================================
      RETOUR
@@ -1912,7 +1905,7 @@ function NotificationsPage() {
               <button type="button" onClick={() => { setArchiveView('actives'); setStatutFilter('TOUS'); }} aria-pressed={archiveView === 'actives'} className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${archiveView === 'actives' ? 'border-blue-700 bg-blue-700 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}>
                 <Bell size={15} /> Notifications actives
               </button>
-              <button type="button" onClick={() => navigate('/dashboard/admin/parametres?section=notifications-archivees')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-focus motion-reduce:transition-none">
+              <button type="button" onClick={() => navigate('/dashboard/admin/parametres?section=archives')} aria-pressed={archiveView === 'archivees'} className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${archiveView === 'archivees' ? 'border-blue-700 bg-blue-700 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}>
                 <Archive size={15} /> Archives
               </button>
             </div>
@@ -2758,13 +2751,13 @@ function NotificationsPage() {
 
                                 <button
                                   type="button"
-                                  onClick={() => archiveNotification(notification)}
+                                  onClick={() => archiveView === 'archivees' ? restoreNotification(notification) : archiveNotification(notification)}
                                   disabled={actionLoading}
                                   className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white p-2 text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
-                                  aria-label="Archiver la notification"
-                                  title="Archiver"
+                                  aria-label={archiveView === 'archivees' ? 'Restaurer la notification' : 'Archiver la notification'}
+                                  title={archiveView === 'archivees' ? 'Restaurer' : 'Archiver'}
                                 >
-                                  <Archive size={15} />
+                                  {archiveView === 'archivees' ? <ArchiveRestore size={15} /> : <Archive size={15} />}
                                 </button>
 
                                 <button
@@ -2858,22 +2851,91 @@ function NotificationsPage() {
         </div>
       )}
 
-      <NotificationConfirmDialog
-        open={Boolean(pendingArchive)}
-        action="archiver"
-        notification={pendingArchive}
-        loading={actionLoading}
-        onCancel={() => { if (!actionLoading) setPendingArchive(null); }}
-        onConfirm={confirmArchiveNotification}
-      />
+      {/* Confirmation de suppression */}
+      {pendingDelete && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && deletingId === null) {
+              setPendingDelete(null);
+            }
+          }}
+        >
+          <section
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-notification-title"
+            aria-describedby="delete-notification-description"
+            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600">
+                <Trash2 size={21} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 id="delete-notification-title" className="text-lg font-bold text-slate-900">
+                  Confirmer la suppression
+                </h2>
+                <p id="delete-notification-description" className="mt-2 text-sm leading-6 text-slate-600">
+                  Voulez-vous vraiment supprimer cette notification ?
+                </p>
+                {pendingDelete.sujet && (
+                  <p className="mt-2 break-words text-sm font-semibold text-slate-800">
+                    « {pendingDelete.sujet} »
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setPendingDelete(null)}
+                disabled={deletingId !== null}
+                aria-label="Fermer la confirmation"
+                className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setPendingDelete(null)}
+                disabled={deletingId !== null}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteNotification}
+                disabled={deletingId !== null}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-red-700 active:bg-red-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {deletingId !== null ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    Suppression...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={16} />
+                    Supprimer
+                  </>
+                )}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       <NotificationConfirmDialog
-        open={Boolean(pendingDelete)}
-        action="supprimer"
-        notification={pendingDelete}
-        loading={deletingId !== null}
-        onCancel={() => { if (deletingId === null) setPendingDelete(null); }}
-        onConfirm={confirmDeleteNotification}
+        open={Boolean(pendingArchive)}
+        action="archive"
+        subject={pendingArchive?.sujet || 'cette notification'}
+        busy={actionLoading}
+        onConfirm={confirmerArchivage}
+        onCancel={() => { if (!actionLoading) setPendingArchive(null); }}
       />
 
       {selectedNotification && (

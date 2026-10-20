@@ -1,144 +1,72 @@
 import { useEffect, useRef } from 'react';
 import { Archive, LoaderCircle, Trash2, X } from 'lucide-react';
 
-/**
- * Dialogue de confirmation partagé pour les opérations de notification.
- * Aucune requête n'est exécutée par ce composant : il ne fait qu'afficher
- * la confirmation et appeler les callbacks fournis par la page.
- */
 export default function NotificationConfirmDialog({
   open,
-  action = 'archiver',
-  notification,
-  loading = false,
-  onCancel,
+  action = 'archive',
+  subject = 'cette notification',
+  busy = false,
   onConfirm,
+  onCancel,
 }) {
-  const dialogRef = useRef(null);
   const cancelRef = useRef(null);
-  const openerRef = useRef(null);
+  const confirmRef = useRef(null);
+  const previousFocus = useRef(null);
+  const onCancelRef = useRef(onCancel);
+  const busyRef = useRef(busy);
+  const isDelete = action === 'delete';
+  const titleId = 'notification-confirm-title';
+  const descriptionId = 'notification-confirm-description';
 
-  const latestPropsRef = useRef({ loading, onCancel });
-
-  useEffect(() => {
-    latestPropsRef.current = { loading, onCancel };
-  }, [loading, onCancel]);
+  // Keep the latest callback/state without reinstalling the keyboard listener
+  // every time the parent renders while a request is running.
+  onCancelRef.current = onCancel;
+  busyRef.current = busy;
 
   useEffect(() => {
     if (!open) return undefined;
-
-    openerRef.current = document.activeElement;
-    const frame = window.requestAnimationFrame(() => cancelRef.current?.focus());
-
+    previousFocus.current = document.activeElement;
+    const focusTimer = window.setTimeout(() => confirmRef.current?.focus(), 0);
     const onKeyDown = (event) => {
-      if (event.key === 'Escape' && !latestPropsRef.current.loading) {
-        event.preventDefault();
-        latestPropsRef.current.onCancel?.();
-      }
-
-      if (event.key !== 'Tab') return;
-      const items = dialogRef.current?.querySelectorAll(
-        'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      );
-      if (!items?.length) return;
-      const first = items[0];
-      const last = items[items.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
+      if (event.key === 'Escape' && !busyRef.current) onCancelRef.current?.();
+      if (event.key === 'Tab') {
+        const confirmButton = confirmRef.current;
+        const cancelButton = cancelRef.current;
+        if (event.shiftKey && document.activeElement === confirmButton) {
+          event.preventDefault();
+          cancelButton?.focus();
+        } else if (!event.shiftKey && document.activeElement === cancelButton) {
+          event.preventDefault();
+          confirmButton?.focus();
+        }
       }
     };
-
-    window.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keydown', onKeyDown);
     return () => {
-      window.cancelAnimationFrame(frame);
-      window.removeEventListener('keydown', onKeyDown);
-      if (openerRef.current && typeof openerRef.current.focus === 'function') {
-        openerRef.current.focus();
-      }
+      window.clearTimeout(focusTimer);
+      document.removeEventListener('keydown', onKeyDown);
+      previousFocus.current?.focus?.();
     };
   }, [open]);
 
   if (!open) return null;
-
-  const deleting = action === 'supprimer';
-  const title = deleting ? 'Confirmer la suppression' : 'Confirmer l’archivage';
-  const confirmLabel = deleting ? 'Oui, supprimer' : 'Oui, archiver';
-  const subject = String(notification?.sujet || 'Notification sans titre');
-  const message = deleting
-    ? 'Cette notification sera retirée de votre liste. Le relevé et l’anomalie associés seront conservés.'
-    : 'Cette notification sera retirée de la liste active. Vous pourrez la retrouver dans les paramètres et la restaurer.';
+  const Icon = isDelete ? Trash2 : Archive;
 
   return (
-    <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 p-4"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !loading) onCancel?.();
-      }}
-    >
-      <section
-        ref={dialogRef}
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="jr-notification-confirm-title"
-        aria-describedby="jr-notification-confirm-description"
-        className="jr-verre-fort w-full max-w-md rounded-2xl border border-jr-bordure p-5 shadow-2xl sm:p-6"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-start gap-3">
-          <div
-            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${
-              deleting ? 'bg-jr-err-pale text-jr-err' : 'bg-jr-eau-pale text-jr-lien'
-            }`}
-            aria-hidden="true"
-          >
-            {deleting ? <Trash2 size={20} /> : <Archive size={20} />}
-          </div>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-[2px] motion-safe:animate-[jr-fade-in_140ms_ease-out] motion-reduce:animate-none" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onCancel?.(); }}>
+      <section role="alertdialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId} className="w-full max-w-md overflow-hidden rounded-2xl border border-jr-bordure bg-jr-surface text-jr-texte shadow-2xl shadow-slate-950/20">
+        <div className="flex items-start gap-3 border-b border-jr-bordure px-5 py-5 sm:px-6">
+          <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${isDelete ? 'bg-jr-err-pale text-jr-err' : 'bg-jr-elec-pale text-jr-elec-fonce'}`}><Icon size={21} aria-hidden="true" /></span>
           <div className="min-w-0 flex-1">
-            <h2 id="jr-notification-confirm-title" className="text-lg font-bold text-jr-titre">
-              {title}
-            </h2>
-            <p id="jr-notification-confirm-description" className="mt-2 text-sm leading-6 text-jr-doux">
-              {message}
-            </p>
-            <p className="mt-3 break-words rounded-lg border border-jr-bordure bg-jr-champ px-3 py-2 text-sm font-semibold text-jr-texte">
-              « {subject} »
-            </p>
+            <h2 id={titleId} className="text-base font-bold text-jr-titre">{isDelete ? 'Confirmer la suppression' : 'Confirmer l’archivage'}</h2>
+            <p id={descriptionId} className="mt-1 text-sm leading-6 text-jr-doux">{isDelete ? `Voulez-vous vraiment supprimer « ${subject} » ? Le relevé et l’anomalie associés seront conservés.` : `Voulez-vous vraiment archiver « ${subject} » ? Vous pourrez la retrouver et la restaurer depuis Paramètres.`}</p>
           </div>
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={loading}
-            aria-label="Fermer la confirmation"
-            className="rounded-lg p-2 text-jr-faible transition-colors hover:bg-jr-eau-pale hover:text-jr-texte focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-focus disabled:opacity-50 motion-reduce:transition-none"
-          >
-            <X size={18} />
-          </button>
+          <button type="button" onClick={onCancel} disabled={busy} aria-label="Fermer la confirmation" className="rounded-lg p-1.5 text-jr-faible transition hover:bg-jr-fond hover:text-jr-texte disabled:opacity-50 motion-reduce:transition-none"><X size={17} /></button>
         </div>
-
-        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <button
-            ref={cancelRef}
-            type="button"
-            onClick={onCancel}
-            disabled={loading}
-            className="inline-flex min-h-10 items-center justify-center rounded-lg border border-jr-bordure-forte bg-jr-surface px-4 py-2.5 text-sm font-semibold text-jr-texte transition-colors hover:bg-jr-champ focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-focus disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
-          >
-            Annuler
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            disabled={loading}
-            className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-bold text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-focus focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none ${
-              deleting ? 'bg-jr-err hover:brightness-95' : 'bg-jr-eau hover:bg-jr-eau-fonce'
-            }`}
-          >
-            {loading && <LoaderCircle size={16} className="animate-spin motion-reduce:animate-none" />}
-            {loading ? (deleting ? 'Suppression…' : 'Archivage…') : confirmLabel}
+        <div className="flex flex-col-reverse gap-2 bg-jr-fond/70 px-5 py-4 sm:flex-row sm:justify-end sm:px-6">
+          <button ref={cancelRef} type="button" onClick={onCancel} disabled={busy} className="inline-flex min-h-10 items-center justify-center rounded-xl border border-jr-bordure bg-jr-surface px-4 py-2.5 text-sm font-semibold text-jr-doux transition hover:bg-jr-fond focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-focus disabled:opacity-50 motion-reduce:transition-none">Annuler</button>
+          <button ref={confirmRef} type="button" onClick={onConfirm} disabled={busy} className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60 motion-reduce:transition-none ${isDelete ? 'bg-jr-err hover:brightness-95 focus-visible:ring-jr-err' : 'bg-jr-eau hover:bg-jr-eau-fonce focus-visible:ring-jr-focus'}`}>
+            {busy ? <LoaderCircle size={16} className="animate-spin motion-reduce:animate-none" /> : <Icon size={16} />}{isDelete ? 'Oui, supprimer' : 'Oui, archiver'}
           </button>
         </div>
       </section>

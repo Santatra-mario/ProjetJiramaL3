@@ -860,3 +860,31 @@ html:not(.dark):has(.jr-palette-jirama) {
     transition-duration: 0.01ms !important;
   }
 }
+
+
+/* =========================================================
+   PRÉFÉRENCES D'AFFICHAGE PERSISTANTES — PAGE PARAMÈTRES JIRAMA
+   Activées par SettingsPage après chargement de la configuration serveur.
+========================================================= */
+html.jr-force-reduced-motion *,
+html.jr-force-reduced-motion *::before,
+html.jr-force-reduced-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+  transition-duration: 0.01ms !important;
+}
+
+html.jr-compact .jr-admin main {
+  padding-top: 1rem !important;
+  padding-bottom: 1rem !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.jr-theme-anim *,
+  html.jr-theme-anim *::before,
+  html.jr-theme-anim *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

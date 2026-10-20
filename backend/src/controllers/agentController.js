@@ -352,22 +352,24 @@ async function generateAgentNotifications() {
   const agents =
     await pool.query(`
       SELECT
-        id,
-        email
+        u.id,
+        u.email,
+        COALESCE(s.notif_anomalies, TRUE) AS notif_anomalies
 
-      FROM users
+      FROM users u
+      LEFT JOIN user_settings s ON s.user_id = u.id
 
       WHERE UPPER(
-        TRIM(role)
+        TRIM(u.role)
       ) = 'AGENT'
 
       AND LOWER(
-        TRIM(statut)
+        TRIM(u.statut)
       ) = 'actif'
 
-      AND email IS NOT NULL
+      AND u.email IS NOT NULL
 
-      AND TRIM(email) <> ''
+      AND TRIM(u.email) <> ''
     `);
 
 
@@ -436,6 +438,7 @@ async function generateAgentNotifications() {
   for (
     const agent of agents.rows
   ) {
+    if (agent.notif_anomalies === false) continue;
 
     const email =
       String(
@@ -698,8 +701,6 @@ async function getAgentDashboard(
             'EN_ATTENTE'
 
           AND masquee_le IS NULL
-
-          AND archive_le IS NULL
 
           AND LOWER(
             TRIM(destinataire)
@@ -1742,7 +1743,6 @@ async function getAgentNotifications(
 
           WHERE LOWER(TRIM(n.destinataire)) = $1
             AND n.masquee_le IS NULL
-            AND n.archive_le IS NULL
 
           ORDER BY
 
@@ -1878,7 +1878,6 @@ async function getAgentNotificationCount(
 
           WHERE statut = 'EN_ATTENTE'
             AND masquee_le IS NULL
-            AND archive_le IS NULL
             AND LOWER(TRIM(destinataire)) = $1
         `,
         [email]
@@ -1968,7 +1967,6 @@ async function markAgentNotificationAsRead(
           WHERE id = $1
             AND LOWER(TRIM(destinataire)) = $2
             AND masquee_le IS NULL
-            AND archive_le IS NULL
 
           RETURNING *
         `,
@@ -2055,7 +2053,6 @@ async function markAllAgentNotificationsAsRead(
 
           WHERE statut = 'EN_ATTENTE'
             AND masquee_le IS NULL
-            AND archive_le IS NULL
             AND LOWER(TRIM(destinataire)) = $1
         `,
         [email]

@@ -9,11 +9,11 @@ import {
 } from 'react-router-dom';
 
 import {
-  Archive,
   Bell,
+  Archive,
+  Trash2,
   CheckCheck,
   Clock3,
-  Trash2,
   TriangleAlert,
   X,
 } from 'lucide-react';
@@ -21,8 +21,8 @@ import {
 import axiosClient from "../../api/axiosClient";
 
 import AgentLayout from "../../components/admin/agent/AgentLayout";
-import NotificationConfirmDialog from '../../components/notifications/NotificationConfirmDialog.jsx';
-import { signalerChangementNotifications } from '../../components/admin/agent/notificationsAgent.js';
+import NotificationConfirmDialog from "../../components/notifications/NotificationConfirmDialog.jsx";
+import { signalerChangementNotifications } from "../../components/admin/agent/notificationsAgent.js";
 
 
 function formatDateTime(
@@ -129,16 +129,15 @@ function AgentNotificationsPage() {
   ] =
     useState(false);
 
+  const [pendingAction, setPendingAction] = useState(null);
+  const [actionBusy, setActionBusy] = useState(false);
+
 
   const [
     error,
     setError,
   ] =
     useState('');
-
-  const [success, setSuccess] = useState('');
-  const [pendingAction, setPendingAction] = useState(null);
-  const [actionBusy, setActionBusy] = useState(false);
 
 
   async function loadNotifications() {
@@ -171,10 +170,17 @@ function AgentNotificationsPage() {
       }
 
 
-      setNotifications(
-        response.data?.data ||
-        []
-      );
+      const incomingNotifications = Array.isArray(response.data?.data)
+        ? response.data.data
+        : Array.isArray(response.data?.notifications)
+          ? response.data.notifications
+          : [];
+      setNotifications(incomingNotifications);
+      signalerChangementNotifications({
+        count: incomingNotifications.filter(
+          (item) => String(item.statut || '').toUpperCase() === 'EN_ATTENTE'
+        ).length,
+      });
 
     } catch (
       requestError
@@ -264,29 +270,17 @@ function AgentNotificationsPage() {
       );
 
 
-      setNotifications(
-        (
-          previous
-        ) =>
-          previous.map(
-            (
-              item
-            ) =>
-              Number(
-                item.id
-              ) ===
-              Number(id)
-
-                ? {
-                    ...item,
-                    statut:
-                      'ENVOYE',
-                  }
-
-                : item
-          )
+      const updatedNotifications = notifications.map((item) =>
+        Number(item.id) === Number(id)
+          ? { ...item, statut: 'ENVOYE' }
+          : item
       );
-      signalerChangementNotifications({ source: 'lecture', id });
+      setNotifications(updatedNotifications);
+      signalerChangementNotifications({
+        count: updatedNotifications.filter(
+          (item) => String(item.statut || '').toUpperCase() === 'EN_ATTENTE'
+        ).length,
+      });
 
     } catch (
       requestError
@@ -315,51 +309,29 @@ function AgentNotificationsPage() {
   }
 
 
-  function requestNotificationAction(notification, action) {
-    if (!notification || actionBusy) return;
-    setError('');
-    setSuccess('');
+  function demanderActionNotification(notification, action) {
     setPendingAction({ notification, action });
   }
 
-  async function confirmNotificationAction() {
+  async function confirmerActionNotification() {
     if (!pendingAction || actionBusy) return;
     const { notification, action } = pendingAction;
-    const id = notification.id;
-
+    setActionBusy(true);
+    setError('');
     try {
-      setActionBusy(true);
-      setError('');
-      setSuccess('');
-
-      const response = action === 'archiver'
-        ? await axiosClient.patch(`/notifications/${id}/archiver`)
-        : await axiosClient.delete(`/notifications/${id}`);
-
-      if (response.data?.status !== 'success') {
-        throw new Error(response.data?.message || 'L’opération sur la notification a échoué.');
+      if (action === 'archive') {
+        await axiosClient.patch(`/notifications/${notification.id}/archiver`);
+      } else {
+        await axiosClient.delete(`/notifications/${notification.id}`);
       }
-
-      setNotifications((previous) => previous.filter((item) => String(item.id) !== String(id)));
-      signalerChangementNotifications({ source: action, id });
+      const remaining = notifications.filter((item) => String(item.id) !== String(notification.id));
+      setNotifications(remaining);
+      signalerChangementNotifications({
+        count: remaining.filter((item) => String(item.statut || '').toUpperCase() === 'EN_ATTENTE').length,
+      });
       setPendingAction(null);
-      setSuccess(response.data?.message || (action === 'archiver'
-        ? 'Notification archivée. Vous pourrez la restaurer depuis les paramètres.'
-        : 'Notification supprimée de votre liste.'));
     } catch (requestError) {
-      console.error('Erreur opération notification Agent :', requestError);
-      if ([401, 403].includes(requestError.response?.status)) {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        navigate('/', { replace: true });
-        return;
-      }
-      setPendingAction(null);
-      setError(
-        requestError.response?.data?.message ||
-        requestError.message ||
-        'Impossible de modifier cette notification.'
-      );
+      setError(requestError.response?.data?.message || requestError.message || 'Impossible de modifier cette notification.');
     } finally {
       setActionBusy(false);
     }
@@ -389,24 +361,12 @@ function AgentNotificationsPage() {
       );
 
 
-      setNotifications(
-        (
-          previous
-        ) =>
-          previous.map(
-            (
-              item
-            ) => ({
-
-              ...item,
-
-              statut:
-                'ENVOYE',
-
-            })
-          )
-      );
-      signalerChangementNotifications({ source: 'lecture-globale' });
+      const updatedNotifications = notifications.map((item) => ({
+        ...item,
+        statut: 'ENVOYE',
+      }));
+      setNotifications(updatedNotifications);
+      signalerChangementNotifications({ count: 0 });
 
     } catch (
       requestError
@@ -537,8 +497,8 @@ function AgentNotificationsPage() {
 
               <button
                 type="button"
-                onClick={() => navigate('/dashboard/agent/parametres?section=notifications-archivees')}
-                className="inline-flex items-center gap-2 rounded-xl border border-jr-bordure-forte bg-jr-surface px-4 py-3 text-sm font-semibold text-jr-texte transition-colors hover:bg-jr-champ focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-focus motion-reduce:transition-none"
+                onClick={() => navigate('/dashboard/agent/parametres?section=archives')}
+                className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 transition hover:border-blue-300 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 motion-reduce:transition-none"
               >
                 <Archive size={17} />
                 Archives
@@ -621,12 +581,6 @@ function AgentNotificationsPage() {
 
         )}
 
-
-        {success && (
-          <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
-            {success}
-          </div>
-        )}
 
         <section
           className="
@@ -947,39 +901,22 @@ function AgentNotificationsPage() {
                       </div>
 
 
-                      <div className="flex shrink-0 flex-wrap gap-2 lg:flex-col">
+                      <div className="flex shrink-0 flex-wrap items-center gap-2 lg:flex-col lg:items-stretch">
                         {unreadItem && (
                           <button
                             type="button"
                             onClick={() => markAsRead(notification.id)}
                             disabled={processing || actionBusy}
-                            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-jr-eau px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-jr-eau-fonce disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
+                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-jr-eau px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-jr-eau-fonce disabled:opacity-50 motion-reduce:transition-none"
                           >
-                            <CheckCheck size={16} />
-                            Marquer lue
+                            <CheckCheck size={16} /> Marquer lue
                           </button>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => requestNotificationAction(notification, 'archiver')}
-                          disabled={actionBusy || processing}
-                          aria-label={`Archiver la notification ${notification.sujet || notification.id}`}
-                          title="Archiver"
-                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-jr-bordure-forte bg-jr-surface px-3 py-2 text-sm font-semibold text-jr-texte transition-colors hover:bg-jr-champ disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
-                        >
-                          <Archive size={16} />
-                          Archiver
+                        <button type="button" onClick={() => demanderActionNotification(notification, 'archive')} disabled={actionBusy} className="inline-flex items-center justify-center gap-2 rounded-xl border border-jr-bordure bg-jr-surface px-3 py-2.5 text-sm font-semibold text-jr-doux transition hover:bg-jr-fond disabled:opacity-50 motion-reduce:transition-none">
+                          <Archive size={16} /> Archiver
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => requestNotificationAction(notification, 'supprimer')}
-                          disabled={actionBusy || processing}
-                          aria-label={`Supprimer la notification ${notification.sujet || notification.id}`}
-                          title="Supprimer"
-                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-jr-err-bordure bg-jr-err-pale px-3 py-2 text-sm font-semibold text-jr-err transition-colors hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
-                        >
-                          <Trash2 size={16} />
-                          Supprimer
+                        <button type="button" onClick={() => demanderActionNotification(notification, 'delete')} disabled={actionBusy} className="inline-flex items-center justify-center gap-2 rounded-xl border border-jr-err-bordure bg-jr-err-pale px-3 py-2.5 text-sm font-semibold text-jr-err transition hover:brightness-95 disabled:opacity-50 motion-reduce:transition-none">
+                          <Trash2 size={16} /> Supprimer
                         </button>
                       </div>
 
@@ -1000,11 +937,11 @@ function AgentNotificationsPage() {
 
       <NotificationConfirmDialog
         open={Boolean(pendingAction)}
-        action={pendingAction?.action || 'archiver'}
-        notification={pendingAction?.notification}
-        loading={actionBusy}
+        action={pendingAction?.action || 'archive'}
+        subject={pendingAction?.notification?.sujet || 'cette notification'}
+        busy={actionBusy}
         onCancel={() => { if (!actionBusy) setPendingAction(null); }}
-        onConfirm={confirmNotificationAction}
+        onConfirm={confirmerActionNotification}
       />
 
     </AgentLayout>

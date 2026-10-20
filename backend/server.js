@@ -45,6 +45,9 @@ const comparaisonRoutes =
 const notificationRoutes =
   require('./src/routes/notificationRoutes');
 
+const settingsRoutes =
+  require('./src/routes/settingsRoutes');
+
 const responsableRoutes =
   require('./src/routes/responsableRoutes');
 
@@ -225,6 +228,12 @@ app.use(
   notificationRoutes
 );
 
+// PARAMÈTRES UTILISATEUR (ADMINISTRATEUR, AGENT, RESPONSABLE)
+app.use(
+  '/api/settings',
+  settingsRoutes
+);
+
 // ---------------------------------------------------------
 // RESPONSABLE
 // ---------------------------------------------------------
@@ -340,6 +349,9 @@ app.get(
 
         notifications:
           '/api/notifications',
+
+        settings:
+          '/api/settings',
 
         responsable:
           '/api/responsable',
@@ -531,6 +543,10 @@ const server =
 
       console.log(
         `Notifications : http://localhost:${PORT}/api/notifications`
+      );
+
+      console.log(
+        `Paramètres : http://localhost:${PORT}/api/settings`
       );
 
       console.log(

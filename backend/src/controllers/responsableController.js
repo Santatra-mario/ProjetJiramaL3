@@ -209,15 +209,17 @@ async function synchronizeNotificationsForAnomalies() {
   const users = await pool.query(
     `
       SELECT
-        id,
-        email,
-        role
-      FROM users
-      WHERE LOWER(TRIM(statut)) = 'actif'
-        AND UPPER(TRIM(role)) = ANY($1::text[])
-        AND email IS NOT NULL
-        AND TRIM(email) <> ''
-      ORDER BY role, id
+        u.id,
+        u.email,
+        u.role,
+        COALESCE(s.notif_anomalies, TRUE) AS notif_anomalies
+      FROM users u
+      LEFT JOIN user_settings s ON s.user_id = u.id
+      WHERE LOWER(TRIM(u.statut)) = 'actif'
+        AND UPPER(TRIM(u.role)) = ANY($1::text[])
+        AND u.email IS NOT NULL
+        AND TRIM(u.email) <> ''
+      ORDER BY u.role, u.id
     `,
     [ROLES_NOTIFICATION]
   );
@@ -230,7 +232,7 @@ async function synchronizeNotificationsForAnomalies() {
 
     for (const user of users.rows) {
       const email = normalizeEmail(user.email);
-      if (!email) continue;
+      if (!email || user.notif_anomalies === false) continue;
 
       const existing = await pool.query(
         `
@@ -362,7 +364,6 @@ async function getResponsableDashboard(req, res) {
             FROM notifications n
             WHERE LOWER(TRIM(n.destinataire)) = $1
               AND n.masquee_le IS NULL
-              AND n.archive_le IS NULL
               AND UPPER(TRIM(n.statut)) = 'EN_ATTENTE'
           ) AS notifications_non_lues
       `, [email]),
@@ -451,7 +452,6 @@ async function getResponsableDashboard(req, res) {
           FROM notifications
           WHERE LOWER(TRIM(destinataire)) = $1
             AND masquee_le IS NULL
-            AND archive_le IS NULL
           ORDER BY created_at DESC, id DESC
           LIMIT 8
         `,
@@ -552,7 +552,6 @@ async function getResponsableNotifications(req, res) {
           ON a.id = n.anomalie_id
         WHERE LOWER(TRIM(n.destinataire)) = $1
           AND n.masquee_le IS NULL
-          AND n.archive_le IS NULL
         ORDER BY n.created_at DESC, n.id DESC
       `,
       [email]
@@ -590,7 +589,6 @@ async function getResponsableNotificationCount(req, res) {
         FROM notifications
         WHERE LOWER(TRIM(destinataire)) = $1
           AND masquee_le IS NULL
-          AND archive_le IS NULL
           AND UPPER(TRIM(statut)) = 'EN_ATTENTE'
       `,
       [normalizeEmail(user.email)]
@@ -637,7 +635,6 @@ async function markResponsableNotificationAsRead(req, res) {
         WHERE id = $1
           AND LOWER(TRIM(destinataire)) = $2
           AND masquee_le IS NULL
-          AND archive_le IS NULL
         RETURNING id, statut, date_envoi
       `,
       [id, normalizeEmail(user.email)]
@@ -682,7 +679,6 @@ async function markAllResponsableNotificationsAsRead(req, res) {
           date_envoi = CURRENT_TIMESTAMP
         WHERE LOWER(TRIM(destinataire)) = $1
           AND masquee_le IS NULL
-          AND archive_le IS NULL
           AND UPPER(TRIM(statut)) = 'EN_ATTENTE'
       `,
       [normalizeEmail(user.email)]

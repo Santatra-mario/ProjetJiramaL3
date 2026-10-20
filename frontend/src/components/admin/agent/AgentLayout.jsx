@@ -81,7 +81,7 @@ const menuItems = [
   },
   {
     label: 'Paramètres',
-    description: 'Notifications archivées',
+    description: 'Profil et préférences',
     path: '/dashboard/agent/parametres',
     icon: Settings,
   },

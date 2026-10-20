@@ -24,7 +24,6 @@ import RelevesPage from './pages/admin/RelevesPage.jsx';
 import AnomaliesPage from './pages/admin/AnomaliesPage.jsx';
 import ComparaisonPage from './pages/admin/ComparaisonPage.jsx';
 import NotificationsPage from './pages/admin/NotificationsPage.jsx';
-import NotificationsArchivesPage from './pages/shared/NotificationsArchivesPage.jsx';
 
 // =========================================================
 // AGENT
@@ -44,6 +43,7 @@ import AgentNotificationsPage from './pages/agent/AgentNotificationsPage.jsx';
 import ResponsableDashboard from './pages/responsable/ResponsableDashboard.jsx';
 import ResponsableAnomaliesPage from './pages/responsable/ResponsableAnomaliesPage.jsx';
 import ResponsableNotificationsPage from './pages/responsable/ResponsableNotificationsPage.jsx';
+import SettingsPage from './pages/shared/SettingsPage.jsx';
 
 // =========================================================
 // PROTECTION DES ROUTES
@@ -296,7 +296,7 @@ function App() {
           path="/dashboard/admin/parametres"
           element={
             <ProtectedRoute role="ADMINISTRATEUR">
-              <NotificationsArchivesPage role="ADMINISTRATEUR" />
+              <SettingsPage />
             </ProtectedRoute>
           }
         />
@@ -363,7 +363,7 @@ function App() {
           path="/dashboard/agent/parametres"
           element={
             <ProtectedRoute role="AGENT">
-              <NotificationsArchivesPage role="AGENT" />
+              <SettingsPage />
             </ProtectedRoute>
           }
         />
@@ -403,7 +403,7 @@ function App() {
           path="/dashboard/responsable/parametres"
           element={
             <ProtectedRoute role="RESPONSABLE">
-              <NotificationsArchivesPage role="RESPONSABLE" />
+              <SettingsPage />
             </ProtectedRoute>
           }
         />

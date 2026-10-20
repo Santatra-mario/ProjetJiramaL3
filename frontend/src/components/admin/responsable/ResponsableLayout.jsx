@@ -17,8 +17,8 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
-  Settings,
   ShieldCheck,
+  Settings,
   TriangleAlert,
   X,
 } from 'lucide-react';
@@ -31,7 +31,6 @@ import {
   useToast,
 } from '../../ui/ToastProvider.jsx';
 import { traiterErreurSession } from './sessionResponsable.js';
-import { EVENEMENT_NOTIFICATIONS_RESPONSABLE } from './notificationsResponsable.js';
 
 const INTERVALLE_COMPTEUR = 30000;
 
@@ -58,7 +57,7 @@ const menuItems = [
     label: 'Paramètres',
     path: '/dashboard/responsable/parametres',
     icon: Settings,
-    description: 'Notifications archivées',
+    description: 'Profil et préférences',
   },
 ];
 
@@ -243,12 +242,6 @@ function ContenuLayout({ children, title }) {
     chargerCompteur();
     setMobileOpen(false);
   }, [location.pathname, chargerCompteur]);
-
-  useEffect(() => {
-    const actualiserCompteur = () => chargerCompteur();
-    window.addEventListener(EVENEMENT_NOTIFICATIONS_RESPONSABLE, actualiserCompteur);
-    return () => window.removeEventListener(EVENEMENT_NOTIFICATIONS_RESPONSABLE, actualiserCompteur);
-  }, [chargerCompteur]);
 
   /* ---------- Menu mobile : fermeture avec Échap ---------- */
 

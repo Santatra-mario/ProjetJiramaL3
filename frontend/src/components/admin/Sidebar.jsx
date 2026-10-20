@@ -165,11 +165,7 @@ function Sidebar({
             type="button"
             onClick={() => handleNavigate('/dashboard/admin/parametres')}
             aria-current={activePath === '/dashboard/admin/parametres' ? 'page' : undefined}
-            className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-elec ${
-              activePath === '/dashboard/admin/parametres'
-                ? 'bg-jr-eau text-white'
-                : 'text-jr-doux hover:bg-jr-eau-pale hover:text-jr-lien'
-            }`}
+            className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition hover:bg-jr-eau-pale hover:text-jr-lien focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-elec ${activePath === '/dashboard/admin/parametres' ? 'bg-jr-eau-pale text-jr-lien' : 'text-jr-doux'}`}
           >
             <Settings size={20} aria-hidden="true" />
             Paramètres

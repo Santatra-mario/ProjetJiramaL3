@@ -32,6 +32,19 @@ function normalizeEmail(email) {
     .toLowerCase();
 }
 
+async function recordNotificationAudit(identity, action, notificationId, details = {}) {
+  try {
+    await pool.query(
+      `INSERT INTO user_audit_logs (user_id, actor_role, action, resource_type, resource_id, details)
+       VALUES ($1, $2, $3, 'notification', $4, $5::jsonb)`,
+      [identity?.id || null, String(identity?.role || ''), action, String(notificationId), JSON.stringify(details)]
+    );
+  } catch (error) {
+    // Ne pas annuler une action déjà enregistrée si la journalisation échoue.
+    console.error('Journalisation notification indisponible :', error.message);
+  }
+}
+
 // ============================================================
 // UTILITAIRE : IDENTITÉ DE L'UTILISATEUR CONNECTÉ
 // ============================================================
@@ -401,19 +414,21 @@ async function createNotificationFromAnomaly(
       await pool.query(
         `
         SELECT
-          id,
-          nom,
-          prenom,
-          identifiant,
-          email,
-          role
-        FROM users
+          u.id,
+          u.nom,
+          u.prenom,
+          u.identifiant,
+          u.email,
+          u.role,
+          COALESCE(s.notif_anomalies, TRUE) AS notif_anomalies
+        FROM users u
+        LEFT JOIN user_settings s ON s.user_id = u.id
         WHERE
-          LOWER(TRIM(statut)) = 'actif'
-          AND UPPER(TRIM(role)) = ANY($1::text[])
-          AND email IS NOT NULL
-          AND TRIM(email) <> ''
-        ORDER BY role, id
+          LOWER(TRIM(u.statut)) = 'actif'
+          AND UPPER(TRIM(u.role)) = ANY($1::text[])
+          AND u.email IS NOT NULL
+          AND TRIM(u.email) <> ''
+        ORDER BY u.role, u.id
         `,
         [ROLES_NOTIFICATION]
       );
@@ -457,7 +472,7 @@ async function createNotificationFromAnomaly(
           user.email
         );
 
-      if (!destinataire) {
+      if (!destinataire || user.notif_anomalies === false) {
         continue;
       }
 
@@ -1438,6 +1453,7 @@ async function archiveNotification(req, res) {
       });
     }
 
+    await recordNotificationAudit(identity, 'ARCHIVAGE_NOTIFICATION', notificationId, { anomalieId: result.rows[0].anomalie_id });
     return res.status(200).json({
       status: 'success',
       message: 'Notification archivée avec succès.',
@@ -1497,6 +1513,7 @@ async function restoreNotification(req, res) {
       });
     }
 
+    await recordNotificationAudit(identity, 'RESTAURATION_NOTIFICATION', notificationId, { anomalieId: result.rows[0].anomalie_id });
     return res.status(200).json({
       status: 'success',
       message: 'Notification désarchivée avec succès.',
@@ -1571,6 +1588,7 @@ async function deleteNotification(req, res) {
       });
     }
 
+    await recordNotificationAudit(identity, 'SUPPRESSION_NOTIFICATION', notificationId, { anomalieId: result.rows[0].anomalie_id });
     return res.status(200).json({
       status: 'success',
       message: 'Notification supprimée de votre liste.',

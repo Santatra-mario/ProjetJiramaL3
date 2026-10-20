@@ -1,6 +1,7 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
+const { logAudit } = require('../utils/auditLogger');
 
 async function login(req, res) {
   try {
@@ -169,6 +170,16 @@ async function login(req, res) {
           process.env.JWT_EXPIRES_IN || '1d',
       }
     );
+
+    // Journaliser la connexion réussie sans jamais enregistrer le mot de passe.
+    await logAudit({
+      actorId: user.id,
+      actorRole: role,
+      action: 'CONNEXION_REUSSIE',
+      resourceType: 'session',
+      resourceId: user.id,
+      details: { methode: 'identifiant_ou_email' },
+    });
 
     // ==================================================
     // RÉPONSE

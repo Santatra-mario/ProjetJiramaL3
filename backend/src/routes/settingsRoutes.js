@@ -1,0 +1,13 @@
+'use strict';
+const express = require('express');
+const router = express.Router();
+const { verifyToken, checkRole } = require('../middlewares/authMiddleware');
+const { getSettings, updatePreferences, updateProfile, changePassword, getAuditLog } = require('../controllers/settingsController');
+const roles = ['ADMINISTRATEUR', 'AGENT', 'RESPONSABLE'];
+router.use(verifyToken, checkRole(...roles));
+router.get('/', getSettings);
+router.patch('/preferences', updatePreferences);
+router.patch('/profile', updateProfile);
+router.patch('/password', changePassword);
+router.get('/audit', getAuditLog);
+module.exports = router;

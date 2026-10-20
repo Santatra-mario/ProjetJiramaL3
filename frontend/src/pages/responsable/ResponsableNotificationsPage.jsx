@@ -7,17 +7,16 @@ import {
 import {
   AlertTriangle,
   Archive,
+  Trash2,
   Bell,
   CheckCheck,
   RefreshCw,
-  Trash2,
 } from 'lucide-react';
 
 import { useNavigate } from 'react-router-dom';
 import axiosClient from "../../api/axiosClient";
 import ResponsableLayout from "../../components/admin/responsable/ResponsableLayout";
-import NotificationConfirmDialog from '../../components/notifications/NotificationConfirmDialog.jsx';
-import { signalerChangementNotificationsResponsable } from '../../components/admin/responsable/notificationsResponsable.js';
+import NotificationConfirmDialog from "../../components/notifications/NotificationConfirmDialog.jsx";
 
 function formatDateTime(value) {
   if (!value) return '—';
@@ -85,7 +84,6 @@ export default function ResponsableNotificationsPage() {
   const [processing, setProcessing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
   const [pendingAction, setPendingAction] = useState(null);
   const [actionBusy, setActionBusy] = useState(false);
 
@@ -103,13 +101,19 @@ export default function ResponsableNotificationsPage() {
         );
       }
 
-      setNotifications(
-        Array.isArray(response.data?.data)
-          ? response.data.data
-          : Array.isArray(response.data?.notifications)
-            ? response.data.notifications
-            : []
-      );
+      const incomingNotifications = Array.isArray(response.data?.data)
+        ? response.data.data
+        : Array.isArray(response.data?.notifications)
+          ? response.data.notifications
+          : [];
+      setNotifications(incomingNotifications);
+      window.dispatchEvent(new CustomEvent('jirama:notifications-responsable', {
+        detail: {
+          count: incomingNotifications.filter(
+            (item) => String(item.statut || '').toUpperCase() === 'EN_ATTENTE'
+          ).length,
+        },
+      }));
     } catch (requestError) {
       console.error('Erreur notifications Responsable :', requestError);
 
@@ -147,7 +151,6 @@ export default function ResponsableNotificationsPage() {
     try {
       setProcessing(true);
       await axiosClient.patch(`/responsable/notifications/${id}/lue`);
-      signalerChangementNotificationsResponsable({ source: 'lecture', id });
       await loadNotifications(true);
     } catch (requestError) {
       console.error('Erreur lecture notification :', requestError);
@@ -160,50 +163,29 @@ export default function ResponsableNotificationsPage() {
     }
   }
 
-  function requestNotificationAction(notification, action) {
-    if (!notification || actionBusy || processing) return;
-    setError('');
-    setSuccess('');
+  function demanderActionNotification(notification, action) {
     setPendingAction({ notification, action });
   }
 
-  async function confirmNotificationAction() {
+  async function confirmerActionNotification() {
     if (!pendingAction || actionBusy) return;
     const { notification, action } = pendingAction;
-    const id = notification.id;
-
+    setActionBusy(true);
+    setError('');
     try {
-      setActionBusy(true);
-      setError('');
-      setSuccess('');
-      const response = action === 'archiver'
-        ? await axiosClient.patch(`/notifications/${id}/archiver`)
-        : await axiosClient.delete(`/notifications/${id}`);
-
-      if (response.data?.status !== 'success') {
-        throw new Error(response.data?.message || 'L’opération sur la notification a échoué.');
+      if (action === 'archive') {
+        await axiosClient.patch(`/notifications/${notification.id}/archiver`);
+      } else {
+        await axiosClient.delete(`/notifications/${notification.id}`);
       }
-
-      setNotifications((previous) => previous.filter((item) => String(item.id) !== String(id)));
-      signalerChangementNotificationsResponsable({ source: action, id });
+      const remaining = notifications.filter((item) => String(item.id) !== String(notification.id));
+      setNotifications(remaining);
+      window.dispatchEvent(new CustomEvent('jirama:notifications-responsable', {
+        detail: { count: remaining.filter((item) => String(item.statut || '').toUpperCase() === 'EN_ATTENTE').length },
+      }));
       setPendingAction(null);
-      setSuccess(response.data?.message || (action === 'archiver'
-        ? 'Notification archivée. Vous pourrez la restaurer depuis les paramètres.'
-        : 'Notification supprimée de votre liste.'));
     } catch (requestError) {
-      console.error('Erreur opération notification Responsable :', requestError);
-      if ([401, 403].includes(requestError.response?.status)) {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        navigate('/', { replace: true });
-        return;
-      }
-      setPendingAction(null);
-      setError(
-        requestError.response?.data?.message ||
-        requestError.message ||
-        'Impossible de modifier cette notification.'
-      );
+      setError(requestError.response?.data?.message || requestError.message || 'Impossible de modifier cette notification.');
     } finally {
       setActionBusy(false);
     }
@@ -215,7 +197,6 @@ export default function ResponsableNotificationsPage() {
     try {
       setProcessing(true);
       await axiosClient.patch('/responsable/notifications/lire-tout');
-      signalerChangementNotificationsResponsable({ source: 'lecture-globale' });
       await loadNotifications(true);
     } catch (requestError) {
       console.error('Erreur lecture globale :', requestError);
@@ -251,20 +232,19 @@ export default function ResponsableNotificationsPage() {
               </span>
               <button
                 type="button"
-                onClick={() => navigate('/dashboard/responsable/parametres?section=notifications-archivees')}
-                className="inline-flex items-center gap-2 rounded-lg border border-jr-bordure-forte bg-jr-surface px-4 py-3 text-sm font-semibold text-jr-texte transition-colors hover:bg-jr-champ focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-focus motion-reduce:transition-none"
-              >
-                <Archive size={17} />
-                Archives
-              </button>
-              <button
-                type="button"
                 onClick={() => loadNotifications(true)}
                 disabled={refreshing}
                 className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 <RefreshCw size={17} className={refreshing ? 'animate-spin' : ''} />
                 Actualiser
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/dashboard/responsable/parametres?section=archives')}
+                className="inline-flex items-center gap-2 rounded-2xl border border-jr-bordure bg-jr-surface px-4 py-3 text-sm font-semibold text-jr-doux transition hover:bg-jr-eau-pale hover:text-jr-lien motion-reduce:transition-none"
+              >
+                <Archive size={17} /> Archives
               </button>
               <button
                 type="button"
@@ -282,12 +262,6 @@ export default function ResponsableNotificationsPage() {
         {error && (
           <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">
             {error}
-          </div>
-        )}
-
-        {success && (
-          <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
-            {success}
           </div>
         )}
 
@@ -378,36 +352,14 @@ export default function ResponsableNotificationsPage() {
                         </p>
                       )}
 
-                      <div className="mt-4 flex flex-wrap gap-2">
+                      <div className="mt-4 flex flex-wrap items-center gap-2">
                         {unreadItem && (
-                          <button
-                            type="button"
-                            onClick={() => markAsRead(notification.id)}
-                            disabled={processing || actionBusy}
-                            className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-jr-eau px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-jr-eau-fonce disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
-                          >
-                            <CheckCheck size={16} />
-                            Marquer comme lue
+                          <button type="button" onClick={() => markAsRead(notification.id)} disabled={processing || actionBusy} className="inline-flex items-center gap-2 rounded-xl bg-jr-eau px-3 py-2 text-sm font-semibold text-white transition hover:bg-jr-eau-fonce disabled:opacity-50 motion-reduce:transition-none">
+                            <CheckCheck size={16} /> Marquer comme lue
                           </button>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => requestNotificationAction(notification, 'archiver')}
-                          disabled={processing || actionBusy}
-                          aria-label={`Archiver la notification ${notification.sujet || notification.id}`}
-                          className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-jr-bordure-forte bg-jr-surface px-3 py-2 text-sm font-semibold text-jr-texte transition-colors hover:bg-jr-champ disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
-                        >
-                          <Archive size={16} /> Archiver
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => requestNotificationAction(notification, 'supprimer')}
-                          disabled={processing || actionBusy}
-                          aria-label={`Supprimer la notification ${notification.sujet || notification.id}`}
-                          className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-jr-err-bordure bg-jr-err-pale px-3 py-2 text-sm font-semibold text-jr-err transition-colors hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
-                        >
-                          <Trash2 size={16} /> Supprimer
-                        </button>
+                        <button type="button" onClick={() => demanderActionNotification(notification, 'archive')} disabled={actionBusy} className="inline-flex items-center gap-2 rounded-xl border border-jr-bordure bg-jr-surface px-3 py-2 text-sm font-semibold text-jr-doux transition hover:bg-jr-fond disabled:opacity-50 motion-reduce:transition-none"><Archive size={16} /> Archiver</button>
+                        <button type="button" onClick={() => demanderActionNotification(notification, 'delete')} disabled={actionBusy} className="inline-flex items-center gap-2 rounded-xl border border-jr-err-bordure bg-jr-err-pale px-3 py-2 text-sm font-semibold text-jr-err transition hover:brightness-95 disabled:opacity-50 motion-reduce:transition-none"><Trash2 size={16} /> Supprimer</button>
                       </div>
                     </div>
                   </div>
@@ -419,11 +371,11 @@ export default function ResponsableNotificationsPage() {
       </div>
       <NotificationConfirmDialog
         open={Boolean(pendingAction)}
-        action={pendingAction?.action || 'archiver'}
-        notification={pendingAction?.notification}
-        loading={actionBusy}
+        action={pendingAction?.action || 'archive'}
+        subject={pendingAction?.notification?.sujet || 'cette notification'}
+        busy={actionBusy}
         onCancel={() => { if (!actionBusy) setPendingAction(null); }}
-        onConfirm={confirmNotificationAction}
+        onConfirm={confirmerActionNotification}
       />
     </ResponsableLayout>
   );

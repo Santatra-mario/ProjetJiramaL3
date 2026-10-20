@@ -193,7 +193,7 @@ function ArchiveContent({ role }) {
         <section className="rounded-xl border border-dashed border-jr-bordure-forte bg-jr-surface/90 p-10 text-center">
           <ArchiveRestore size={30} className="mx-auto text-jr-faible" />
           <h2 className="mt-3 text-base font-semibold text-jr-titre">Aucune notification archivée</h2>
-          <p className="mt-1 text-sm text-jr-doux">Les notifications archivées apparaîtront ici. Vous pourrez ensuite les restaurer.</p>
+          <p className="mx-auto mt-1 max-w-xl text-sm leading-6 text-jr-doux">Cette liste affiche uniquement les notifications archivées pour votre compte. Pour en ajouter une, ouvrez les notifications actives et choisissez « Archiver ». Si vous aviez déjà archivé des notifications avant la correction, appliquez la migration SQL 004 pour rattacher les anciennes notifications enregistrées par rôle à leurs destinataires.</p>
         </section>
       ) : (
         <section className="space-y-3" aria-label="Liste des notifications archivées">

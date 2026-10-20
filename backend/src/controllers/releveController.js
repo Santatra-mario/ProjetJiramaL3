@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const { logAudit } = require('../utils/auditLogger');
 const { synchronizeAnomalies } = require('./anomalieController');
 const { notifyAnomalyForReleve } = require('./notificationController');
 
@@ -867,6 +868,8 @@ async function createReleve(
       'COMMIT'
     );
 
+    await logAudit({ actorId: req.user?.id, actorRole: req.user?.role, action: 'RELEVE_CREE', resourceType: 'releve', resourceId: insertResult.rows[0].id, details: { compteur_id: compteurId, consommation } });
+
     try {
       await synchronizeAnomalies();
       await notifyAnomalyForReleve(insertResult.rows[0].id);
@@ -1673,6 +1676,8 @@ async function updateReleve(
       'COMMIT'
     );
 
+    await logAudit({ actorId: req.user?.id, actorRole: req.user?.role, action: 'RELEVE_MODIFIE', resourceType: 'releve', resourceId: releveId, details: {} });
+
     try {
       await synchronizeAnomalies();
       await notifyAnomalyForReleve(releveId);
@@ -1848,6 +1853,8 @@ async function deleteReleve(
     await client.query(
       'COMMIT'
     );
+
+    await logAudit({ actorId: req.user?.id, actorRole: req.user?.role, action: 'RELEVE_SUPPRIME', resourceType: 'releve', resourceId: releveId, details: {} });
 
     return res.status(200).json({
       status: 'success',

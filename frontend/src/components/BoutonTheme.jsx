@@ -2,13 +2,6 @@ import { Moon, Sun } from 'lucide-react';
 
 import { useTheme } from '../hooks/useTheme.js';
 
-/* =========================================================
-   BOUTON MODE CLAIR / SOMBRE
-   - Par défaut : positionné en haut à droite (Login / Register,
-     dans un conteneur « relative »).
-   - integre : s'insère dans une barre (Header admin), sans
-     position absolue.
-========================================================= */
 function BoutonTheme({ className = '', integre = false }) {
   const { estSombre, basculer } = useTheme();
 

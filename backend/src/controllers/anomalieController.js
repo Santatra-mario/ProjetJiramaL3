@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const { logAudit } = require('../utils/auditLogger');
 
 /*
 =========================================================
@@ -1954,6 +1955,15 @@ async function updateAnomalieStatut(
           'Anomalie introuvable.',
       });
     }
+
+    await logAudit({
+      actorId: req.user?.id,
+      actorRole: req.user?.role,
+      action: 'ANOMALIE_STATUT_MODIFIE',
+      resourceType: 'anomalie',
+      resourceId: id,
+      details: { nouveau_statut: statut, motif_present: Boolean(commentaire) },
+    });
 
     return res.status(200).json({
 

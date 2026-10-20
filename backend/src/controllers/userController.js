@@ -1,5 +1,6 @@
 const bcrypt = require('bcrypt');
 const pool = require('../config/db');
+const { logAudit } = require('../utils/auditLogger');
 
 const ROLES_AUTORISES = [
   'AGENT',
@@ -257,6 +258,8 @@ async function registerUser(req, res) {
         ]
       );
 
+    await logAudit({ actorId: req.user?.id, actorRole: req.user?.role, action: 'UTILISATEUR_CREE', resourceType: 'user', resourceId: result.rows[0]?.id, details: { role: roleNettoye } });
+
     return res.status(201).json({
       status: 'success',
       message: 'Utilisateur créé avec succès.',
@@ -394,6 +397,8 @@ async function updateUser(req, res) {
       });
     }
 
+    await logAudit({ actorId: req.user?.id, actorRole: req.user?.role, action: 'UTILISATEUR_MODIFIE', resourceType: 'user', resourceId: id, details: { champs: ['nom', 'prenom', 'identifiant', 'email'] } });
+
     return res.status(200).json({
       status: 'success',
       message:
@@ -492,6 +497,8 @@ async function updateUserStatus(req, res) {
       ]
     );
 
+    await logAudit({ actorId: req.user?.id, actorRole: req.user?.role, action: 'STATUT_UTILISATEUR_MODIFIE', resourceType: 'user', resourceId: id, details: { statut: nouveauStatut } });
+
     return res.status(200).json({
       status: 'success',
       message:
@@ -571,6 +578,8 @@ async function updateUserRole(req, res) {
         message: 'Utilisateur introuvable.',
       });
     }
+
+    await logAudit({ actorId: req.user?.id, actorRole: req.user?.role, action: 'ROLE_UTILISATEUR_MODIFIE', resourceType: 'user', resourceId: id, details: { nouveau_role: role } });
 
     return res.status(200).json({
       status: 'success',
