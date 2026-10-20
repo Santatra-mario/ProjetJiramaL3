@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-
+// main.jsx
+import '@fontsource-variable/nunito';
 import App from './App.jsx';
 import { ThemeProvider } from './hooks/useTheme.js';
 import './index.css';

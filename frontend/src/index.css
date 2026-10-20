@@ -888,3 +888,17 @@ html.jr-compact .jr-admin main {
     transition-duration: 0.01ms !important;
   }
 }
+
+body {
+  font-family: 'Nunito Variable', sans-serif;
+}
+
+h1 {
+  font-weight: 500;
+  transition: font-weight 0.3s ease, transform 0.3s ease;
+}
+
+h1:hover {
+  font-weight: 900;
+  transform: scale(1.03);
+}
