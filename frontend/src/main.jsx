@@ -4,6 +4,7 @@ import ReactDOM from 'react-dom/client';
 import '@fontsource-variable/nunito';
 import App from './App.jsx';
 import { ThemeProvider } from './hooks/useTheme.js';
+import { DisplayPreferencesProvider } from './hooks/useDisplayPreferences.js';
 import './index.css';
 
 // Le ThemeProvider enveloppe toute l'application : le thème
@@ -13,7 +14,9 @@ ReactDOM.createRoot(
 ).render(
   <React.StrictMode>
     <ThemeProvider>
-      <App />
+      <DisplayPreferencesProvider>
+        <App />
+      </DisplayPreferencesProvider>
     </ThemeProvider>
   </React.StrictMode>
 );

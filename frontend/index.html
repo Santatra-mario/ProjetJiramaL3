@@ -21,6 +21,11 @@
           } catch (e2) {}
         }
         if (sombre) document.documentElement.classList.add('dark');
+        try {
+          var taille = localStorage.getItem('jirama-display-size');
+          if (taille === 'grand') document.documentElement.classList.add('jr-font-grand');
+          if (taille === 'presentation') document.documentElement.classList.add('jr-presentation-mode');
+        } catch (e3) {}
       })();
     </script>
   </head>

@@ -13,6 +13,7 @@ import {
   Archive,
   Trash2,
   CheckCheck,
+  CheckCircle2,
   Clock3,
   TriangleAlert,
   X,
@@ -22,6 +23,7 @@ import axiosClient from "../../api/axiosClient";
 
 import AgentLayout from "../../components/admin/agent/AgentLayout";
 import NotificationConfirmDialog from "../../components/notifications/NotificationConfirmDialog.jsx";
+import SuiviConsommationIndication from "../../components/notifications/SuiviConsommationIndication.jsx";
 import { signalerChangementNotifications } from "../../components/admin/agent/notificationsAgent.js";
 
 
@@ -101,6 +103,28 @@ function decisionMessageClass(decision) {
   return decision?.type === 'refusee'
     ? 'border-red-200 bg-red-50/80 text-red-800'
     : 'border-emerald-200 bg-emerald-50/80 text-emerald-800';
+}
+
+function getNotificationTone(type, unread) {
+  const value = String(type || '').trim().toUpperCase();
+  if (value === 'INFO_CONSOMMATION_NORMALE') {
+    return unread
+      ? { card: 'border-emerald-200 bg-emerald-50/50', icon: 'bg-emerald-100 text-emerald-700' }
+      : { card: 'border-emerald-100 bg-white', icon: 'bg-emerald-50 text-emerald-600' };
+  }
+  if (value === 'ALERTE_CONSOMMATION_CRITIQUE') {
+    return unread
+      ? { card: 'border-red-300 bg-red-50/60', icon: 'bg-red-100 text-red-700' }
+      : { card: 'border-red-100 bg-white', icon: 'bg-red-50 text-red-600' };
+  }
+  if (['ALERTE_SURCONSOMMATION', 'ALERTE_SOUS_CONSOMMATION', 'INFO_RELEVE_A_VERIFIER'].includes(value)) {
+    return unread
+      ? { card: 'border-amber-200 bg-amber-50/50', icon: 'bg-amber-100 text-amber-700' }
+      : { card: 'border-slate-200 bg-white', icon: 'bg-slate-100 text-slate-500' };
+  }
+  return unread
+    ? { card: 'border-amber-200 bg-amber-50/40', icon: 'bg-amber-100 text-amber-700' }
+    : { card: 'border-slate-200 bg-white', icon: 'bg-slate-100 text-slate-500' };
 }
 
 function AgentNotificationsPage() {
@@ -659,7 +683,7 @@ function AgentNotificationsPage() {
                 "
               >
                 Vous n’avez aucune
-                alerte à afficher.
+                notification à afficher.
               </p>
 
             </div>
@@ -676,6 +700,7 @@ function AgentNotificationsPage() {
                   'EN_ATTENTE';
 
                 const decision = getAdminDecision(notification);
+                const notificationTone = getNotificationTone(notification.type, unreadItem);
 
                 return (
 
@@ -683,23 +708,7 @@ function AgentNotificationsPage() {
                     key={
                       notification.id
                     }
-                    className={`
-                      rounded-3xl
-                      border
-                      p-5
-                      shadow-sm
-                      ${
-                        unreadItem
-                          ? `
-                            border-amber-200
-                            bg-amber-50/40
-                          `
-                          : `
-                            border-slate-200
-                            bg-white
-                          `
-                      }
-                    `}
+                    className={`rounded-3xl border p-5 shadow-sm ${notificationTone.card}`}
                   >
 
                     <div
@@ -713,36 +722,15 @@ function AgentNotificationsPage() {
                     >
 
                       <div
-                        className={`
-                          rounded-2xl
-                          p-3
-                          ${
-                            unreadItem
-                              ? `
-                                bg-amber-100
-                                text-amber-700
-                              `
-                              : `
-                                bg-slate-100
-                                text-slate-500
-                              `
-                          }
-                        `}
+                        className={`rounded-2xl p-3 ${notificationTone.icon}`}
                       >
 
                         {
-                          notification.type ===
-                          'ALERTE_ANOMALIE'
-                            ? (
-                              <TriangleAlert
-                                size={21}
-                              />
-                            )
-                            : (
-                              <Bell
-                                size={21}
-                              />
-                            )
+                          notification.type === 'INFO_CONSOMMATION_NORMALE'
+                            ? <CheckCircle2 size={21} />
+                            : ['ALERTE_ANOMALIE', 'ALERTE_CONSOMMATION_CRITIQUE', 'ALERTE_SURCONSOMMATION', 'ALERTE_SOUS_CONSOMMATION'].includes(notification.type)
+                              ? <TriangleAlert size={21} />
+                              : <Bell size={21} />
                         }
 
                       </div>
@@ -807,6 +795,8 @@ function AgentNotificationsPage() {
                             notification.message
                           }
                         </p>
+
+                        <SuiviConsommationIndication notification={notification} />
 
                         {decision && (
                           <div className={`mt-4 rounded-2xl border p-4 ${decisionMessageClass(decision)}`}>

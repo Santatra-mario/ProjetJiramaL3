@@ -1,7 +1,7 @@
 const pool = require('../config/db');
 const { logAudit } = require('../utils/auditLogger');
 const { synchronizeAnomalies } = require('./anomalieController');
-const { notifyAnomalyForReleve } = require('./notificationController');
+const { synchroniserNotificationSuiviReleve } = require('../services/consommationNotificationService');
 
 
 function isValidDateString(value) {
@@ -872,11 +872,19 @@ async function createReleve(
 
     try {
       await synchronizeAnomalies();
-      await notifyAnomalyForReleve(insertResult.rows[0].id);
     } catch (analysisError) {
       console.error(
-        'Erreur analyse/notification après création du relevé :',
+        'Erreur synchronisation des anomalies après création du relevé :',
         analysisError
+      );
+    }
+
+    try {
+      await synchroniserNotificationSuiviReleve(insertResult.rows[0].id);
+    } catch (notificationError) {
+      console.error(
+        'Erreur notification de suivi après création du relevé :',
+        notificationError
       );
     }
 
@@ -1635,6 +1643,32 @@ async function updateReleve(
         rowNewIndex;
     }
 
+    // Identifier les relevés dont les données ou la consommation changent.
+    // Une modification de relevé ancien peut modifier les consommations suivantes.
+    const historiqueOriginalParId = new Map(
+      history.map((row) => [Number(row.id), {
+        date_releve: formatDateOnly(row.date_releve),
+        date_ancien_releve: formatDateOnly(row.date_ancien_releve),
+        ancien_index: Number(row.ancien_index),
+        nouvel_index: Number(row.nouvel_index),
+        consommation: Number(row.consommation),
+      }])
+    );
+
+    const relevesAReNotifier = recalculatedRows
+      .filter((row) => {
+        const original = historiqueOriginalParId.get(Number(row.id));
+        if (!original) return true;
+        return (
+          original.date_releve !== row.date_releve ||
+          original.date_ancien_releve !== row.date_ancien_releve ||
+          original.ancien_index !== Number(row.ancien_index) ||
+          original.nouvel_index !== Number(row.nouvel_index) ||
+          Math.abs(original.consommation - Number(row.consommation)) > 0.0001
+        );
+      })
+      .map((row) => Number(row.id));
+
     /* =====================================================
        APPLIQUER LES VALEURS RECALCULÉES
     ===================================================== */
@@ -1680,12 +1714,22 @@ async function updateReleve(
 
     try {
       await synchronizeAnomalies();
-      await notifyAnomalyForReleve(releveId);
     } catch (analysisError) {
       console.error(
-        'Erreur analyse/notification après modification du relevé :',
+        'Erreur synchronisation des anomalies après modification du relevé :',
         analysisError
       );
+    }
+
+    for (const releveConcerneId of relevesAReNotifier) {
+      try {
+        await synchroniserNotificationSuiviReleve(releveConcerneId);
+      } catch (notificationError) {
+        console.error(
+          `Erreur notification de suivi après modification du relevé #${releveConcerneId} :`,
+          notificationError
+        );
+      }
     }
 
     return res.status(200).json({

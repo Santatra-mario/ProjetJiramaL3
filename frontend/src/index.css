@@ -34,23 +34,24 @@ body {
   --jr-sur-elec: #0a3566; /* texte sur fond orange */
 
   /* Fonds et surfaces */
-  --jr-fond: #f3f7fc;
-  --jr-fond-debut: #e6f0fa;
-  --jr-fond-fin: #fff4e3;
-  --jr-surface: #ffffff;
-  --jr-champ: #f8fafc;
+  --jr-fond: #edf2f7;
+  --jr-fond-debut: #e8eff7;
+  --jr-fond-fin: #f1f5f9;
+  --jr-surface: #f8fafc;
+  --jr-surface-secondaire: #e8eef5;
+  --jr-champ: #f0f4f8;
 
   /* Texte */
-  --jr-texte: #0f172a;
-  --jr-texte-doux: #475569;
-  --jr-texte-faible: #64748b;
+  --jr-texte: #172536;
+  --jr-texte-doux: #405166;
+  --jr-texte-faible: #53657b;
   --jr-titre: #0a3566;
   --jr-lien: #0f5fa8;
   --jr-attention: #a85f00;
 
   /* Bordures et focus */
-  --jr-bordure: #e2e8f0;
-  --jr-bordure-forte: #cbd5e1;
+  --jr-bordure: #d5deea;
+  --jr-bordure-forte: #bdcad9;
   --jr-focus: #0f5fa8;
   --jr-focus-anneau: #e6f1fb;
 
@@ -94,6 +95,7 @@ body {
   --jr-fond-debut: #082447;
   --jr-fond-fin: #101a30;
   --jr-surface: #0d2646;
+  --jr-surface-secondaire: #12315a;
   --jr-champ: #12315a;
 
   /* Texte */
@@ -502,7 +504,7 @@ body,
 
 /* ----- Fonds ----- */
 .jr-admin .bg-white {
-  background-color: color-mix(in srgb, var(--jr-surface) 92%, transparent);
+  background-color: var(--jr-surface);
 }
 .jr-admin .focus\:bg-white:focus {
   background-color: var(--jr-surface);
@@ -516,7 +518,7 @@ body,
 .jr-admin .bg-slate-100,
 .jr-admin .bg-slate-200\/60,
 .jr-admin .bg-slate-200\/70 {
-  background-color: var(--jr-bordure);
+  background-color: var(--jr-surface-secondaire);
 }
 .jr-admin .hover\:bg-slate-50:hover,
 .jr-admin .hover\:bg-slate-50\/80:hover,
@@ -711,16 +713,17 @@ body,
    Blanc #FFFFFF · gris clair #F4F7FB · gris foncé #263445
 ========================================================= */
 html:not(.dark):has(.jr-palette-jirama) {
-  --jr-fond-debut: #f4f7fb;
-  --jr-fond: #f4f7fb;
-  --jr-fond-fin: #f4f7fb;
-  --jr-surface: #ffffff;
-  --jr-champ: #f4f7fb;
+  --jr-fond-debut: #edf2f7;
+  --jr-fond: #edf2f7;
+  --jr-fond-fin: #f1f5f9;
+  --jr-surface: #f8fafc;
+  --jr-surface-secondaire: #e8eef5;
+  --jr-champ: #f0f4f8;
 
   --jr-texte: #263445;
   --jr-titre: #003b73;
-  --jr-texte-doux: color-mix(in srgb, #263445 82%, #ffffff);
-  --jr-texte-faible: color-mix(in srgb, #263445 70%, #ffffff);
+  --jr-texte-doux: #405166;
+  --jr-texte-faible: #53657b;
 
   --jr-bordure: color-mix(in srgb, #0054a6 14%, #ffffff);
   --jr-bordure-forte: color-mix(in srgb, #0054a6 32%, #ffffff);
@@ -895,10 +898,164 @@ body {
 
 h1 {
   font-weight: 500;
-  transition: font-weight 0.3s ease, transform 0.3s ease;
+  transition: color 0.2s ease;
 }
 
-h1:hover {
-  font-weight: 900;
-  transform: scale(1.03);
+/* =========================================================
+   PRÉFÉRENCES D'AFFICHAGE — taille globale et vidéoprojection
+   Les classes sont appliquées sur <html> par useDisplayPreferences.
+   Les tailles Tailwind exprimées en rem suivent ainsi ces réglages.
+========================================================= */
+html {
+  font-size: 100%;
+  scroll-padding-top: 5.5rem;
 }
+
+html.jr-font-grand {
+  font-size: 112.5%;
+}
+
+html.jr-presentation-mode {
+  font-size: 125%;
+}
+
+/* Police commune cohérente, en utilisant la police déjà fournie localement. */
+body {
+  font-family: 'Nunito Variable', 'Segoe UI', system-ui, sans-serif;
+}
+
+.jr-display-panel {
+  color-scheme: light;
+}
+.dark .jr-display-panel {
+  color-scheme: dark;
+}
+
+/* Les chiffres alignés en colonnes se comparent plus facilement. */
+.jr-admin :is(table, [data-numeric="true"]) {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Dans le mode présentation, privilégier les chiffres et libellés lisibles. */
+html.jr-presentation-mode .jr-admin .recharts-cartesian-axis-tick-value,
+html.jr-presentation-mode .jr-admin .recharts-legend-item-text {
+  font-size: 14px !important;
+}
+
+html.jr-presentation-mode .jr-admin .recharts-tooltip-wrapper,
+html.jr-presentation-mode .jr-admin .recharts-default-tooltip {
+  font-size: 1rem !important;
+}
+
+html.jr-presentation-mode .jr-admin :is(th, td) {
+  font-size: max(0.9rem, 1em) !important;
+  line-height: 1.55;
+  padding-block: 0.75rem;
+}
+
+html.jr-presentation-mode .jr-admin :is(input, select, textarea, button) {
+  line-height: 1.4;
+}
+
+/* Le menu d'affichage doit rester lisible et utilisable en petit écran. */
+@media (max-width: 640px) {
+  html.jr-font-grand { font-size: 106.25%; }
+  html.jr-presentation-mode { font-size: 112.5%; }
+}
+
+/* Respecte toujours la préférence de réduction des animations du système. */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
+
+/* =========================================================
+   CORRECTION DU FOND BLANC ET DU CONTRASTE — JIRAMA
+   Les anciennes classes Tailwind sont reliées aux surfaces thématiques.
+   Les logos et les éléments explicitement conçus sur fond blanc (par
+   exemple les fichiers de marque) gardent leur style propre.
+========================================================= */
+.jr-admin {
+  color: var(--jr-texte);
+}
+
+/* Les cartes et panneaux autrefois forcés en blanc utilisent maintenant
+   un gris bleuté très clair (clair) ou un bleu nuit (sombre). */
+.jr-admin .bg-white,
+.jr-admin .hover\:bg-white:hover,
+.jr-admin .focus\:bg-white:focus {
+  background-color: var(--jr-surface);
+}
+
+.jr-admin .bg-slate-50,
+.jr-admin .bg-slate-50\/50,
+.jr-admin .bg-slate-50\/70,
+.jr-admin .bg-slate-50\/80 {
+  background-color: var(--jr-champ);
+}
+
+.jr-admin .bg-slate-100,
+.jr-admin .bg-slate-200\/60,
+.jr-admin .bg-slate-200\/70 {
+  background-color: var(--jr-surface-secondaire);
+}
+
+.jr-admin .hover\:bg-slate-50:hover,
+.jr-admin .hover\:bg-slate-100:hover,
+.jr-admin .hover\:bg-slate-200:hover {
+  background-color: var(--jr-eau-pale);
+}
+
+/* Les libellés secondaires restent assez foncés, y compris en petite taille. */
+.jr-admin .text-gray-400,
+.jr-admin .text-gray-500,
+.jr-admin .text-slate-400,
+.jr-admin .text-slate-500 {
+  color: var(--jr-texte-faible);
+}
+.jr-admin .text-gray-600,
+.jr-admin .text-gray-700,
+.jr-admin .text-slate-600,
+.jr-admin .text-slate-700 {
+  color: var(--jr-texte-doux);
+}
+.jr-admin .text-gray-800,
+.jr-admin .text-gray-900,
+.jr-admin .text-slate-800,
+.jr-admin .text-slate-900 {
+  color: var(--jr-texte);
+}
+
+/* Contrôles de saisie : fond et texte explicites dans les deux thèmes. */
+.jr-admin :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not([type='submit']):not([type='button']):not([type='reset']), select, textarea) {
+  background-color: var(--jr-champ);
+  color: var(--jr-texte);
+  border-color: var(--jr-bordure-forte);
+}
+.jr-admin :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not([type='submit']):not([type='button']):not([type='reset']), textarea)::placeholder {
+  color: var(--jr-texte-faible);
+  opacity: 1;
+}
+.jr-admin :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not([type='submit']):not([type='button']):not([type='reset']), select, textarea):focus {
+  border-color: var(--jr-focus);
+}
+.dark .jr-admin :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not([type='submit']):not([type='button']):not([type='reset']), select, textarea) {
+  color-scheme: dark;
+}
+
+/* Une palette légèrement teintée, sans dégradé blanc omniprésent. */
+.jr-admin :is(table, thead, tbody) {
+  color: var(--jr-texte);
+}
+.jr-admin thead th {
+  background-color: var(--jr-eau-pale);
+  color: var(--jr-texte);
+}
+.jr-admin tbody tr:hover {
+  background-color: var(--jr-eau-pale);
+}
+
+/* Maintenir un focus net au clavier et des transitions discrètes. */
+.jr-admin :is(button, a, input, select, textarea):focus-visible {
+  outline-color: var(--jr-focus);
+}
+

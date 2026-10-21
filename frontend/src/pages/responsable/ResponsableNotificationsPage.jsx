@@ -17,6 +17,7 @@ import { useNavigate } from 'react-router-dom';
 import axiosClient from "../../api/axiosClient";
 import ResponsableLayout from "../../components/admin/responsable/ResponsableLayout";
 import NotificationConfirmDialog from "../../components/notifications/NotificationConfirmDialog.jsx";
+import SuiviConsommationIndication from "../../components/notifications/SuiviConsommationIndication.jsx";
 
 function formatDateTime(value) {
   if (!value) return '—';
@@ -75,6 +76,28 @@ function decisionMessageClass(decision) {
   return decision?.type === 'refusee'
     ? 'border-red-200 bg-red-50/80 text-red-800'
     : 'border-emerald-200 bg-emerald-50/80 text-emerald-800';
+}
+
+function getNotificationTone(type, unread) {
+  const value = String(type || '').trim().toUpperCase();
+  if (value === 'INFO_CONSOMMATION_NORMALE') {
+    return unread
+      ? { card: 'border-emerald-200 bg-emerald-50/50', icon: 'bg-emerald-100 text-emerald-700' }
+      : { card: 'border-emerald-100 bg-white', icon: 'bg-emerald-50 text-emerald-600' };
+  }
+  if (value === 'ALERTE_CONSOMMATION_CRITIQUE') {
+    return unread
+      ? { card: 'border-red-300 bg-red-50/60', icon: 'bg-red-100 text-red-700' }
+      : { card: 'border-red-100 bg-white', icon: 'bg-red-50 text-red-600' };
+  }
+  if (['ALERTE_SURCONSOMMATION', 'ALERTE_SOUS_CONSOMMATION', 'INFO_RELEVE_A_VERIFIER'].includes(value)) {
+    return unread
+      ? { card: 'border-amber-200 bg-amber-50/50', icon: 'bg-amber-100 text-amber-700' }
+      : { card: 'border-slate-200 bg-white', icon: 'bg-slate-100 text-slate-500' };
+  }
+  return unread
+    ? { card: 'border-amber-200 bg-amber-50/40', icon: 'bg-amber-100 text-amber-700' }
+    : { card: 'border-slate-200 bg-white', icon: 'bg-slate-100 text-slate-500' };
 }
 
 export default function ResponsableNotificationsPage() {
@@ -276,7 +299,7 @@ export default function ResponsableNotificationsPage() {
               Aucune notification
             </h3>
             <p className="mt-2 text-sm text-slate-500">
-              Les prochaines anomalies apparaîtront ici automatiquement.
+              Les prochains suivis de consommation et les alertes apparaîtront ici automatiquement.
             </p>
           </div>
         ) : (
@@ -285,17 +308,16 @@ export default function ResponsableNotificationsPage() {
               const unreadItem =
                 String(notification.statut || '').toUpperCase() === 'EN_ATTENTE';
               const decision = getAdminDecision(notification);
+              const notificationTone = getNotificationTone(notification.type, unreadItem);
 
               return (
                 <article
                   key={notification.id}
-                  className={`rounded-3xl border bg-white p-5 shadow-sm ${
-                    unreadItem ? 'border-red-200' : 'border-slate-200'
-                  }`}
+                  className={`rounded-3xl border p-5 shadow-sm ${notificationTone.card}`}
                 >
                   <div className="flex gap-4">
-                    <div className={`rounded-2xl p-3 ${unreadItem ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
-                      <AlertTriangle size={22} />
+                    <div className={`rounded-2xl p-3 ${notificationTone.icon}`}>
+                      {notification.type === 'INFO_CONSOMMATION_NORMALE' ? <Bell size={22} /> : <AlertTriangle size={22} />}
                     </div>
 
                     <div className="min-w-0 flex-1">
@@ -334,6 +356,8 @@ export default function ResponsableNotificationsPage() {
                       <p className="mt-4 text-sm leading-6 text-slate-700">
                         {notification.message || 'Notification de supervision.'}
                       </p>
+
+                      <SuiviConsommationIndication notification={notification} />
 
                       {decision && (
                         <div className={`mt-4 rounded-2xl border p-4 ${decisionMessageClass(decision)}`}>

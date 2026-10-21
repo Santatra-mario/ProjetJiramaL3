@@ -1,6 +1,7 @@
 import { Menu, Bell, ChevronDown } from 'lucide-react';
 
 import BoutonTheme from '../BoutonTheme.jsx';
+import DisplayControls from '../DisplayControls.jsx';
 
 function Header({
   onOpenSidebar,
@@ -23,7 +24,7 @@ function Header({
     <header className="jr-verre-fort sticky top-0 z-30 border-b border-jr-bordure backdrop-blur">
       <div className="flex h-20 items-center justify-between px-4 sm:px-6 lg:px-8">
         {/* Partie gauche */}
-        <div className="flex items-center gap-4">
+        <div className="flex min-w-0 items-center gap-4">
           <button
             type="button"
             onClick={onOpenSidebar}
@@ -33,11 +34,11 @@ function Header({
             <Menu size={23} aria-hidden="true" />
           </button>
 
-          <div>
+          <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-wider text-jr-lien">
               Administration
             </p>
-            <h1 className="text-xl font-bold text-jr-titre sm:text-2xl">
+            <h1 className="truncate text-xl font-bold text-jr-titre sm:text-2xl">
               Tableau de bord administrateur
             </h1>
           </div>
@@ -45,6 +46,9 @@ function Header({
 
         {/* Partie droite */}
         <div className="flex items-center gap-3">
+          {/* Réglages de lisibilité et plein écran */}
+          <DisplayControls />
+
           {/* Mode clair / sombre */}
           <BoutonTheme integre />
 

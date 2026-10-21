@@ -486,13 +486,13 @@ async function createNotificationFromAnomaly(
           `
           SELECT id
           FROM notifications
-          WHERE anomalie_id = $1
-            AND LOWER(TRIM(destinataire))
-                = LOWER(TRIM($2))
+          WHERE (anomalie_id = $1 OR releve_id = $2)
+            AND LOWER(TRIM(destinataire)) = LOWER(TRIM($3))
           LIMIT 1
           `,
           [
             anomalieId,
+            anomalie.releve_id,
             destinataire,
           ]
         );
@@ -810,17 +810,33 @@ async function getAllNotifications(
           n.date_envoi,
           n.statut,
           n.anomalie_id,
+          n.releve_id,
+          n.reference_consommation,
+          n.variation_pourcentage,
+          n.classification,
+          n.niveau_gravite,
+          n.evenement_cle,
           n.created_at,
           n.archive_le,
 
-          a.type_anomalie,
-          a.valeur_detectee,
-          a.valeur_reference,
+          COALESCE(a.type_anomalie, n.classification) AS type_anomalie,
+          COALESCE(a.valeur_detectee, r.consommation) AS valeur_detectee,
+          COALESCE(a.valeur_reference, n.reference_consommation) AS valeur_reference,
           a.seuil,
           a.date_detection,
-          a.statut AS anomalie_statut,
+          COALESCE(
+            n.variation_pourcentage,
+            CASE
+              WHEN a.valeur_reference > 0
+              THEN ((a.valeur_detectee - a.valeur_reference) / NULLIF(a.valeur_reference, 0)) * 100
+              ELSE NULL
+            END
+          ) AS variation,
+          COALESCE(a.statut, NULL) AS anomalie_statut,
 
           r.date_releve,
+          r.ancien_index,
+          r.nouvel_index,
           r.consommation,
 
           c.numero_compteur,
@@ -836,7 +852,7 @@ async function getAllNotifications(
           ON a.id = n.anomalie_id
 
         LEFT JOIN releves r
-          ON r.id = a.releve_id
+          ON r.id = COALESCE(a.releve_id, n.releve_id)
 
         LEFT JOIN compteurs c
           ON c.id = r.compteur_id
@@ -999,16 +1015,32 @@ async function getNotificationById(
           n.date_envoi,
           n.statut,
           n.anomalie_id,
+          n.releve_id,
+          n.reference_consommation,
+          n.variation_pourcentage,
+          n.classification,
+          n.niveau_gravite,
+          n.evenement_cle,
           n.created_at,
 
-          a.type_anomalie,
-          a.valeur_detectee,
-          a.valeur_reference,
+          COALESCE(a.type_anomalie, n.classification) AS type_anomalie,
+          COALESCE(a.valeur_detectee, r.consommation) AS valeur_detectee,
+          COALESCE(a.valeur_reference, n.reference_consommation) AS valeur_reference,
           a.seuil,
           a.date_detection,
+          COALESCE(
+            n.variation_pourcentage,
+            CASE
+              WHEN a.valeur_reference > 0
+              THEN ((a.valeur_detectee - a.valeur_reference) / NULLIF(a.valeur_reference, 0)) * 100
+              ELSE NULL
+            END
+          ) AS variation,
           a.statut AS anomalie_statut,
 
           r.date_releve,
+          r.ancien_index,
+          r.nouvel_index,
           r.consommation,
 
           c.numero_compteur,
@@ -1024,7 +1056,7 @@ async function getNotificationById(
           ON a.id = n.anomalie_id
 
         LEFT JOIN releves r
-          ON r.id = a.releve_id
+          ON r.id = COALESCE(a.releve_id, n.releve_id)
 
         LEFT JOIN compteurs c
           ON c.id = r.compteur_id

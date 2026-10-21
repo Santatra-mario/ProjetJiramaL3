@@ -182,6 +182,7 @@ async function synchronizeNotificationsForAnomalies() {
   const anomalies = await pool.query(`
     SELECT
       a.id,
+      a.releve_id,
       a.type_anomalie,
       a.valeur,
       a.valeur_reference,
@@ -238,11 +239,11 @@ async function synchronizeNotificationsForAnomalies() {
         `
           SELECT id
           FROM notifications
-          WHERE anomalie_id = $1
-            AND LOWER(TRIM(destinataire)) = $2
+          WHERE (anomalie_id = $1 OR releve_id = $2)
+            AND LOWER(TRIM(destinataire)) = $3
           LIMIT 1
         `,
-        [anomalie.id, email]
+        [anomalie.id, anomalie.releve_id, email]
       );
 
       if (existing.rowCount > 0) continue;
@@ -544,12 +545,40 @@ async function getResponsableNotifications(req, res) {
           n.statut,
           n.date_envoi,
           n.anomalie_id,
+          n.releve_id,
+          n.reference_consommation,
+          n.variation_pourcentage,
+          n.classification,
+          n.niveau_gravite,
+          n.evenement_cle,
           n.created_at,
           a.statut AS statut_anomalie,
-          a.commentaire AS motif_administrateur
+          a.commentaire AS motif_administrateur,
+          COALESCE(a.type_anomalie, n.classification) AS type_anomalie,
+          COALESCE(a.valeur_detectee, r.consommation) AS valeur_detectee,
+          COALESCE(a.valeur_reference, n.reference_consommation) AS valeur_reference,
+          COALESCE(
+            n.variation_pourcentage,
+            CASE
+              WHEN a.valeur_reference > 0
+              THEN ((a.valeur_detectee - a.valeur_reference) / NULLIF(a.valeur_reference, 0)) * 100
+              ELSE NULL
+            END
+          ) AS variation,
+          r.date_releve,
+          r.ancien_index,
+          r.nouvel_index,
+          r.consommation,
+          c.numero_compteur,
+          c.type AS type_compteur,
+          ab.numero_abonne,
+          ab.nom AS nom_abonne,
+          ab.prenom AS prenom_abonne
         FROM notifications n
-        LEFT JOIN anomalies a
-          ON a.id = n.anomalie_id
+        LEFT JOIN anomalies a ON a.id = n.anomalie_id
+        LEFT JOIN releves r ON r.id = COALESCE(a.releve_id, n.releve_id)
+        LEFT JOIN compteurs c ON c.id = r.compteur_id
+        LEFT JOIN abonnes ab ON ab.id = c.abonne_id
         WHERE LOWER(TRIM(n.destinataire)) = $1
           AND n.masquee_le IS NULL
         ORDER BY n.created_at DESC, n.id DESC

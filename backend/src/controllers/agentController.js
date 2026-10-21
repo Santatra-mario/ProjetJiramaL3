@@ -465,21 +465,15 @@ async function generateAgentNotifications() {
       const existing =
         await pool.query(
           `
-            SELECT
-              id
-
+            SELECT id
             FROM notifications
-
-            WHERE anomalie_id = $1
-
-            AND LOWER(
-              TRIM(destinataire)
-            ) = $2
-
+            WHERE (anomalie_id = $1 OR releve_id = $2)
+              AND LOWER(TRIM(destinataire)) = $3
             LIMIT 1
           `,
           [
             anomalie.id,
+            anomalie.releve_id,
             email,
           ]
         );
@@ -1699,47 +1693,45 @@ async function getAgentNotifications(
             n.statut,
 
             n.anomalie_id,
-
+            n.releve_id,
+            n.reference_consommation,
+            n.variation_pourcentage,
+            n.classification,
+            n.niveau_gravite,
+            n.evenement_cle,
             n.created_at,
 
-            a.type_anomalie,
-
+            COALESCE(a.type_anomalie, n.classification) AS type_anomalie,
             a.statut AS statut_anomalie,
-
             a.commentaire AS motif_administrateur,
-
-            a.niveau,
-
-            a.direction,
-
-            a.valeur,
-
-            a.valeur_reference,
-
-            a.variation,
-
-            a.date_detection,
-
+            COALESCE(a.niveau, n.niveau_gravite) AS niveau,
+            COALESCE(
+              a.direction,
+              CASE
+                WHEN COALESCE(a.variation, n.variation_pourcentage) > 0 THEN 'HAUSSE'
+                WHEN COALESCE(a.variation, n.variation_pourcentage) < 0 THEN 'BAISSE'
+                ELSE NULL
+              END
+            ) AS direction,
+            COALESCE(a.valeur, r.consommation) AS valeur,
+            COALESCE(a.valeur_reference, n.reference_consommation) AS valeur_reference,
+            COALESCE(a.variation, n.variation_pourcentage) AS variation,
+            COALESCE(a.date_detection, n.created_at) AS date_detection,
+            r.date_releve,
+            r.ancien_index,
+            r.nouvel_index,
+            r.consommation,
             c.numero_compteur,
-
             c.type AS type_compteur,
-
             ab.numero_abonne,
-
             ab.nom AS abonne_nom,
-
             ab.prenom AS abonne_prenom
 
           FROM notifications n
-
-          LEFT JOIN ${ANOMALIES_SQL} a
-            ON a.id = n.anomalie_id
-
-          LEFT JOIN compteurs c
-            ON c.id = a.compteur_id
-
-          LEFT JOIN abonnes ab
-            ON ab.id = c.abonne_id
+          LEFT JOIN ${ANOMALIES_SQL} a ON a.id = n.anomalie_id
+          LEFT JOIN releves r ON r.id = COALESCE(a.releve_id, n.releve_id)
+          LEFT JOIN compteurs c ON c.id = COALESCE(a.compteur_id, r.compteur_id)
+          LEFT JOIN abonnes ab ON ab.id = c.abonne_id
 
           WHERE LOWER(TRIM(n.destinataire)) = $1
             AND n.masquee_le IS NULL

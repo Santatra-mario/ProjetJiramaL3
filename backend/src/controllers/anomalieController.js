@@ -187,38 +187,52 @@ On compare chaque relevé avec la moyenne des
 
 async function detectAnomalies() {
   const result = await pool.query(`
-    WITH historique AS (
+    WITH releves_courants AS (
       SELECT
         r.id AS releve_id,
         r.compteur_id,
-        r.date_releve,
+        r.date_ancien_releve::date AS date_ancien_releve,
+        r.date_releve::date AS date_releve,
+        r.ancien_index,
+        r.nouvel_index,
         r.consommation,
-
-        AVG(r.consommation) OVER (
-          PARTITION BY r.compteur_id
-          ORDER BY
-            r.date_releve,
-            r.id
-          ROWS BETWEEN
-            ${NOMBRE_RELEVES_REFERENCE}
-            PRECEDING
-            AND 1 PRECEDING
-        ) AS consommation_reference,
-
-        COUNT(r.consommation) OVER (
-          PARTITION BY r.compteur_id
-          ORDER BY
-            r.date_releve,
-            r.id
-          ROWS BETWEEN
-            ${NOMBRE_RELEVES_REFERENCE}
-            PRECEDING
-            AND 1 PRECEDING
-        ) AS nombre_references
-
+        (r.date_releve::date - r.date_ancien_releve::date)::int AS duree_jours
       FROM releves r
+    ),
+    historique AS (
+      SELECT
+        courant.*,
+        hist.nombre_references,
+        hist.consommation_reference
+      FROM releves_courants courant
+      CROSS JOIN LATERAL (
+        SELECT
+          COUNT(*)::int AS nombre_references,
+          AVG(
+            precedent.consommation /
+            NULLIF(precedent.duree_jours, 0)
+          ) * courant.duree_jours AS consommation_reference
+        FROM (
+          SELECT
+            r_prec.consommation::numeric AS consommation,
+            (r_prec.date_releve::date - r_prec.date_ancien_releve::date)::numeric AS duree_jours
+          FROM releves r_prec
+          WHERE r_prec.compteur_id = courant.compteur_id
+            AND (r_prec.date_releve::date, r_prec.id)
+                < (courant.date_releve, courant.releve_id)
+            AND r_prec.consommation IS NOT NULL
+            AND r_prec.consommation >= 0
+            AND r_prec.ancien_index IS NOT NULL
+            AND r_prec.nouvel_index IS NOT NULL
+            AND r_prec.nouvel_index >= r_prec.ancien_index
+            AND ABS((r_prec.nouvel_index - r_prec.ancien_index) - r_prec.consommation) <= 0.02
+            AND r_prec.date_ancien_releve IS NOT NULL
+            AND r_prec.date_releve::date > r_prec.date_ancien_releve::date
+          ORDER BY r_prec.date_releve DESC, r_prec.id DESC
+          LIMIT ${NOMBRE_RELEVES_REFERENCE}
+        ) precedent
+      ) hist
     )
-
     SELECT
       h.releve_id,
       h.compteur_id,
@@ -226,44 +240,30 @@ async function detectAnomalies() {
       h.consommation,
       h.consommation_reference,
       h.nombre_references,
-
       c.numero_compteur,
       c.type AS type_compteur,
       c.statut AS statut_compteur,
-
       a.id AS abonne_id,
       a.numero_abonne,
       a.nom AS abonne_nom,
       a.prenom AS abonne_prenom,
       a.adresse AS abonne_adresse
-
     FROM historique h
-
-    INNER JOIN compteurs c
-      ON c.id = h.compteur_id
-
-    INNER JOIN abonnes a
-      ON a.id = c.abonne_id
-
-    WHERE
-      h.nombre_references >= $1
-
+    INNER JOIN compteurs c ON c.id = h.compteur_id
+    INNER JOIN abonnes a ON a.id = c.abonne_id
+    WHERE h.nombre_references >= $1
+      AND h.duree_jours > 0
+      AND h.consommation IS NOT NULL
+      AND h.consommation >= 0
+      AND h.ancien_index IS NOT NULL
+      AND h.nouvel_index IS NOT NULL
+      AND h.nouvel_index >= h.ancien_index
+      AND ABS((h.nouvel_index - h.ancien_index) - h.consommation) <= 0.02
       AND h.consommation_reference > 0
-
       AND ABS(
-        (
-          (
-            h.consommation -
-            h.consommation_reference
-          )
-          /
-          h.consommation_reference
-        ) * 100
+        ((h.consommation - h.consommation_reference) / NULLIF(h.consommation_reference, 0)) * 100
       ) >= $2
-
-    ORDER BY
-      h.date_releve DESC,
-      h.releve_id DESC
+    ORDER BY h.date_releve DESC, h.releve_id DESC
   `, [
     NOMBRE_RELEVES_REFERENCE,
     SEUIL_ANOMALIE,
@@ -410,7 +410,8 @@ async function synchronizeAnomalies() {
           `
           SELECT
             id,
-            statut
+            statut,
+            commentaire
           FROM anomalies
           WHERE releve_id = $1
           LIMIT 1
@@ -438,7 +439,19 @@ async function synchronizeAnomalies() {
             valeur_detectee = $2,
             valeur_reference = $3,
             seuil = $4,
-            date_detection = $5
+            date_detection = $5,
+            statut = CASE
+              WHEN UPPER(TRIM(COALESCE(statut, ''))) = 'RESOLUE'
+                AND COALESCE(commentaire, '') LIKE 'Anomalie non confirmée après recalcul%'
+              THEN 'NOUVELLE'
+              ELSE statut
+            END,
+            commentaire = CASE
+              WHEN UPPER(TRIM(COALESCE(statut, ''))) = 'RESOLUE'
+                AND COALESCE(commentaire, '') LIKE 'Anomalie non confirmée après recalcul%'
+              THEN NULL
+              ELSE commentaire
+            END
 
           WHERE releve_id = $6
           `,
@@ -507,6 +520,24 @@ async function synchronizeAnomalies() {
         );
       }
     }
+
+    // Si un relevé modifié n'est plus détecté comme anomalie, clôturer uniquement
+    // les anomalies encore actives. Les décisions manuelles déjà prises sont préservées.
+    const relevesToujoursAnormaux = anomalies.map((item) => Number(item.releve_id));
+    await client.query(
+      `
+        UPDATE anomalies
+        SET
+          statut = 'RESOLUE',
+          commentaire = COALESCE(
+            NULLIF(BTRIM(commentaire), ''),
+            'Anomalie non confirmée après recalcul de la consommation.'
+          )
+        WHERE UPPER(TRIM(COALESCE(statut, ''))) IN ('NOUVELLE', 'EN_COURS')
+          AND NOT (releve_id = ANY($1::integer[]))
+      `,
+      [relevesToujoursAnormaux]
+    );
 
     await client.query(
       'COMMIT'

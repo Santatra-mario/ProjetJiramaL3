@@ -37,11 +37,10 @@ import Header from '../../components/admin/Header.jsx';
 
 import AdminShell from '../../components/admin/AdminShell.jsx';
 import NotificationConfirmDialog from '../../components/notifications/NotificationConfirmDialog.jsx';
+import SuiviConsommationIndication from '../../components/notifications/SuiviConsommationIndication.jsx';
 
 
-/* =========================================================
-   OUTILS
-========================================================= */
+
 
 function formatDate(
   value,
@@ -128,17 +127,25 @@ function getStatusLabel(
 
 function getStatusClasses(statut) {
   if (statut === 'EN_ATTENTE') {
-    return 'border-[var(--jr-elec-anneau)] bg-[var(--jr-elec-pale)] text-jr-attention';
+    return 'jn-status--pending border-[var(--jr-elec-anneau)] bg-[var(--jr-elec-pale)] text-jr-attention';
   }
 
-  return 'border-[var(--jr-ok-anneau)] bg-[var(--jr-ok-pale)] text-jr-ok';
+  return 'jn-status--done border-[var(--jr-ok-anneau)] bg-[var(--jr-ok-pale)] text-jr-ok';
 }
 
 
 function getTypeLabel(type) {
-  if (type === 'ALERTE_ANOMALIE') return 'Alerte anomalie';
-  if (type === 'DECISION_ANOMALIE') return 'Décision sur anomalie';
-  return type || 'Notification';
+  const labels = {
+    ALERTE_ANOMALIE: 'Alerte anomalie',
+    DECISION_ANOMALIE: 'Décision sur anomalie',
+    INFO_CONSOMMATION_NORMALE: 'Consommation normale',
+    ALERTE_SURCONSOMMATION: 'Surconsommation',
+    ALERTE_SOUS_CONSOMMATION: 'Sous-consommation',
+    ALERTE_CONSOMMATION_CRITIQUE: 'Consommation critique',
+    INFO_HISTORIQUE_INSUFFISANT: 'Historique insuffisant',
+    INFO_RELEVE_A_VERIFIER: 'Relevé à vérifier',
+  };
+  return labels[String(type || '').trim().toUpperCase()] || type || 'Notification';
 }
 
 
@@ -154,13 +161,23 @@ function getDecisionLabel(decision) {
 
 
 function getTypeClasses(type) {
-  if (type === 'ALERTE_ANOMALIE') {
-    return 'border-[var(--jr-err-bordure)] bg-[var(--jr-err-pale)] text-jr-err';
+  const key = String(type || '').trim().toUpperCase();
+  if (key === 'INFO_CONSOMMATION_NORMALE') {
+    return 'jn-type--normal border-emerald-200 bg-emerald-50 text-emerald-700';
   }
-  if (type === 'DECISION_ANOMALIE') {
-    return 'border-[var(--jr-eau-clair)] bg-[var(--jr-eau-pale)] text-jr-lien';
+  if (key === 'ALERTE_CONSOMMATION_CRITIQUE' || key === 'ALERTE_ANOMALIE') {
+    return 'jn-type--critical border-[var(--jr-err-bordure)] bg-[var(--jr-err-pale)] text-jr-err';
   }
-  return 'border-[var(--jr-eau-clair)] bg-[var(--jr-eau-pale)] text-jr-lien';
+  if (key === 'ALERTE_SURCONSOMMATION' || key === 'ALERTE_SOUS_CONSOMMATION') {
+    return 'jn-type--warning border-amber-200 bg-amber-50 text-amber-800';
+  }
+  if (key === 'INFO_HISTORIQUE_INSUFFISANT' || key === 'INFO_RELEVE_A_VERIFIER') {
+    return 'jn-type--review border-orange-200 bg-orange-50 text-orange-800';
+  }
+  if (key === 'DECISION_ANOMALIE') {
+    return 'jn-type--decision border-[var(--jr-eau-clair)] bg-[var(--jr-eau-pale)] text-jr-lien';
+  }
+  return 'jn-type--info border-[var(--jr-eau-clair)] bg-[var(--jr-eau-pale)] text-jr-lien';
 }
 
 
@@ -681,10 +698,13 @@ function NotificationsPage() {
 
 
   const alertes =
-    notifications.filter(
-      notification =>
-        notification.type ===
-        'ALERTE_ANOMALIE'
+    notifications.filter((notification) =>
+      [
+        'ALERTE_ANOMALIE',
+        'ALERTE_SURCONSOMMATION',
+        'ALERTE_SOUS_CONSOMMATION',
+        'ALERTE_CONSOMMATION_CRITIQUE',
+      ].includes(String(notification.type || '').trim().toUpperCase())
     ).length;
 
 
@@ -1071,7 +1091,7 @@ function NotificationsPage() {
       intensite="calme"
       className="selection:bg-[var(--jr-elec)] selection:text-[var(--jr-sur-elec)]"
     >
-      <div className="min-h-screen">
+      <div className="jn-notifications min-h-screen">
 
       {/* =================================================
           SIDEBAR
@@ -1162,6 +1182,7 @@ function NotificationsPage() {
 
         <main
           className="
+            jn-notifications-content
             p-4
             sm:p-6
             lg:p-8
@@ -1174,6 +1195,7 @@ function NotificationsPage() {
 
           <div
             className="
+              jn-page-heading
               mb-7
               flex
               flex-col
@@ -1192,6 +1214,7 @@ function NotificationsPage() {
                   goBack
                 }
                 className="
+                  jn-back-button
                   mb-3
                   inline-flex
                   items-center
@@ -1234,6 +1257,7 @@ function NotificationsPage() {
                     w-12
                     items-center
                     justify-center
+                    jn-title-mark
                     rounded-2xl
                     bg-blue-50
                     text-blue-600
@@ -1251,6 +1275,7 @@ function NotificationsPage() {
 
                   <h2
                     className="
+                      jn-page-title
                       text-2xl
                       font-bold
                       text-slate-900
@@ -1263,6 +1288,7 @@ function NotificationsPage() {
 
                   <p
                     className="
+                      jn-page-summary
                       mt-1
                       max-w-3xl
                       text-sm
@@ -1281,6 +1307,7 @@ function NotificationsPage() {
 
             <div
               className="
+                jn-header-actions
                 flex
                 flex-wrap
                 items-center
@@ -1298,6 +1325,7 @@ function NotificationsPage() {
                   loading
                 }
                 className="
+                  jn-action-button jn-action-button--secondary
                   inline-flex
                   items-center
                   gap-2
@@ -1341,6 +1369,7 @@ function NotificationsPage() {
                   enAttente === 0
                 }
                 className="
+                  jn-action-button jn-action-button--primary
                   inline-flex
                   items-center
                   gap-2
@@ -1385,6 +1414,7 @@ function NotificationsPage() {
                 gap-3
                 rounded-2xl
                 border
+                jn-alert jn-alert--error
                 border-[var(--jr-err-bordure)]
                 bg-red-50
                 p-4
@@ -1460,6 +1490,7 @@ function NotificationsPage() {
                 gap-3
                 rounded-2xl
                 border
+                jn-alert jn-alert--success
                 border-[var(--jr-ok-anneau)]
                 bg-emerald-50
                 p-4
@@ -1531,6 +1562,7 @@ function NotificationsPage() {
 
           <div
             className="
+              jn-metrics
               mb-6
               grid
               grid-cols-1
@@ -1542,6 +1574,7 @@ function NotificationsPage() {
 
             <div
               className="
+                jn-metric jn-metric--total
                 rounded-2xl
                 border
                 border-slate-200
@@ -1600,6 +1633,7 @@ function NotificationsPage() {
 
                 <div
                   className="
+                    jn-metric-icon jn-metric-icon--total
                     rounded-xl
                     bg-blue-50
                     p-3
@@ -1620,6 +1654,7 @@ function NotificationsPage() {
 
             <div
               className="
+                jn-metric jn-metric--pending
                 rounded-2xl
                 border
                 border-[var(--jr-elec-anneau)]
@@ -1678,6 +1713,7 @@ function NotificationsPage() {
 
                 <div
                   className="
+                    jn-metric-icon jn-metric-icon--pending
                     rounded-xl
                     bg-white
                     p-3
@@ -1699,6 +1735,7 @@ function NotificationsPage() {
 
             <div
               className="
+                jn-metric jn-metric--treated
                 rounded-2xl
                 border
                 border-[var(--jr-ok-anneau)]
@@ -1757,6 +1794,7 @@ function NotificationsPage() {
 
                 <div
                   className="
+                    jn-metric-icon jn-metric-icon--treated
                     rounded-xl
                     bg-white
                     p-3
@@ -1778,6 +1816,7 @@ function NotificationsPage() {
 
             <div
               className="
+                jn-metric jn-metric--alerts
                 rounded-2xl
                 border
                 border-[var(--jr-err-bordure)]
@@ -1836,6 +1875,7 @@ function NotificationsPage() {
 
                 <div
                   className="
+                    jn-metric-icon jn-metric-icon--alerts
                     rounded-xl
                     bg-white
                     p-3
@@ -1863,6 +1903,7 @@ function NotificationsPage() {
 
           <div
             className="
+              jn-filter-panel
               mb-5
               rounded-2xl
               border
@@ -1875,6 +1916,7 @@ function NotificationsPage() {
 
             <div
               className="
+                jn-filter-title
                 mb-4
                 flex
                 items-center
@@ -1902,10 +1944,10 @@ function NotificationsPage() {
             </div>
 
             <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Vue des notifications">
-              <button type="button" onClick={() => { setArchiveView('actives'); setStatutFilter('TOUS'); }} aria-pressed={archiveView === 'actives'} className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${archiveView === 'actives' ? 'border-blue-700 bg-blue-700 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}>
+              <button type="button" onClick={() => { setArchiveView('actives'); setStatutFilter('TOUS'); }} aria-pressed={archiveView === 'actives'} className={`jn-view-tab inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${archiveView === 'actives' ? 'border-blue-700 bg-blue-700 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}>
                 <Bell size={15} /> Notifications actives
               </button>
-              <button type="button" onClick={() => navigate('/dashboard/admin/parametres?section=archives')} aria-pressed={archiveView === 'archivees'} className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${archiveView === 'archivees' ? 'border-blue-700 bg-blue-700 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}>
+              <button type="button" onClick={() => navigate('/dashboard/admin/parametres?section=archives')} aria-pressed={archiveView === 'archivees'} className={`jn-view-tab inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${archiveView === 'archivees' ? 'border-blue-700 bg-blue-700 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}>
                 <Archive size={15} /> Archives
               </button>
             </div>
@@ -1939,6 +1981,7 @@ function NotificationsPage() {
 
                 <input
                   type="text"
+                  aria-label="Rechercher dans les notifications"
                   value={
                     search
                   }
@@ -1950,6 +1993,7 @@ function NotificationsPage() {
                   }
                   placeholder="Rechercher par sujet, compteur, abonné, destinataire..."
                   className="
+                    jn-field
                     w-full
                     rounded-xl
                     border
@@ -1973,6 +2017,7 @@ function NotificationsPage() {
 
 
               <select
+                aria-label="Filtrer par statut"
                 value={
                   statutFilter
                 }
@@ -1983,6 +2028,7 @@ function NotificationsPage() {
                     )
                 }
                 className="
+                  jn-field
                   rounded-xl
                   border
                   border-slate-200
@@ -2016,6 +2062,7 @@ function NotificationsPage() {
 
 
               <select
+                aria-label="Filtrer par type de notification"
                 value={
                   typeFilter
                 }
@@ -2026,6 +2073,7 @@ function NotificationsPage() {
                     )
                 }
                 className="
+                  jn-field
                   rounded-xl
                   border
                   border-slate-200
@@ -2053,6 +2101,24 @@ function NotificationsPage() {
                 <option value="DECISION_ANOMALIE">
                   Décision sur anomalie
                 </option>
+                <option value="INFO_CONSOMMATION_NORMALE">
+                  Consommation normale
+                </option>
+                <option value="ALERTE_SURCONSOMMATION">
+                  Surconsommation
+                </option>
+                <option value="ALERTE_SOUS_CONSOMMATION">
+                  Sous-consommation
+                </option>
+                <option value="ALERTE_CONSOMMATION_CRITIQUE">
+                  Consommation critique
+                </option>
+                <option value="INFO_HISTORIQUE_INSUFFISANT">
+                  Historique insuffisant
+                </option>
+                <option value="INFO_RELEVE_A_VERIFIER">
+                  Relevé à vérifier
+                </option>
 
               </select>
 
@@ -2067,6 +2133,7 @@ function NotificationsPage() {
 
           <div
             className="
+              jn-table-panel
               overflow-hidden
               rounded-2xl
               border
@@ -2078,6 +2145,7 @@ function NotificationsPage() {
 
             <div
               className="
+                jn-table-heading
                 border-b
                 border-slate-100
                 px-5
@@ -2223,15 +2291,17 @@ function NotificationsPage() {
 
                 <table
                   className="
+                    jn-table
                     min-w-[1000px]
                     w-full
                   "
                 >
-
+                  <caption className="jn-sr-only">Notifications administrateur : sujet, abonné, anomalie, date, statut et actions</caption>
                   <thead>
 
                     <tr
                       className="
+                        jn-table-head
                         border-b
                         border-slate-100
                         bg-slate-50/70
@@ -2322,15 +2392,15 @@ function NotificationsPage() {
                               notification.id
                             }
                             className={`
-                              group border-b border-slate-100 dark:border-slate-700/70
+                              jn-table-row group border-b border-slate-100 dark:border-slate-700/70
                               transition-colors duration-200 ease-out
                               hover:bg-blue-50/80 dark:hover:bg-blue-900/30
                               hover:[box-shadow:inset_3px_0_0_#29b6f6]
                               ${
                                 notification.statut ===
                                 'EN_ATTENTE'
-                                  ? 'bg-[color:color-mix(in_srgb,var(--jr-elec-pale)_22%,transparent)]'
-                                  : 'bg-white'
+                                  ? 'jn-table-row--pending bg-[color:color-mix(in_srgb,var(--jr-elec-pale)_22%,transparent)]'
+                                  : 'jn-table-row--treated bg-white'
                               }
                             `}
                           >
@@ -2408,6 +2478,7 @@ function NotificationsPage() {
 
                                     <span
                                       className={`
+                                        jn-type-badge
                                         rounded-full
                                         border
                                         px-2.5
@@ -2440,6 +2511,8 @@ function NotificationsPage() {
                                       {notification.message || 'Aucun message.'}
                                     </span>
                                   </p>
+
+                                  <SuiviConsommationIndication notification={notification} />
 
                                 </div>
 
@@ -2491,7 +2564,7 @@ function NotificationsPage() {
                               "
                             >
 
-                              {notification.anomalie_id ? (
+                              {notification.anomalie_id || notification.releve_id ? (
 
                                 <div>
 
@@ -2549,23 +2622,18 @@ function NotificationsPage() {
 
 
                                   <p
-                                    className="
-                                      mt-1
-                                      text-xs
-                                      font-semibold
-                                      text-red-600
-                                    "
+                                    className={`mt-1 text-xs font-semibold ${Number(notification.variation) >= 0 ? 'text-amber-700' : 'text-orange-700'}`}
                                   >
-                                    Seuil :{' '}
-                                    {
-                                      notification.seuil !=
-                                      null
-                                        ? `${formatNumber(
-                                            notification.seuil
-                                          )} %`
-                                        : '—'
-                                    }
+                                    Variation :{' '}
+                                    {notification.variation != null
+                                      ? `${Number(notification.variation) > 0 ? '+' : ''}${formatNumber(notification.variation)} %`
+                                      : '—'}
                                   </p>
+                                  {notification.seuil != null && (
+                                    <p className="mt-1 text-xs text-slate-500">
+                                      Seuil de détection : {formatNumber(notification.seuil)} %
+                                    </p>
+                                  )}
 
                                 </div>
 
@@ -2577,7 +2645,7 @@ function NotificationsPage() {
                                     text-slate-400
                                   "
                                 >
-                                  Sans anomalie liée
+                                  Notification de suivi
                                 </span>
 
                               )}
@@ -2637,6 +2705,7 @@ function NotificationsPage() {
 
                               <span
                                 className={`
+                                  jn-status-badge
                                   inline-flex
                                   rounded-full
                                   border
@@ -2667,6 +2736,7 @@ function NotificationsPage() {
 
                               <div
                                 className="
+                                  jn-row-actions
                                   flex
                                   justify-end
                                   gap-2
@@ -2681,6 +2751,7 @@ function NotificationsPage() {
                                     )
                                   }
                                   className="
+                                    jn-row-action jn-row-action--details
                                     inline-flex
                                     items-center
                                     gap-2
@@ -2722,6 +2793,7 @@ function NotificationsPage() {
                                       actionLoading
                                     }
                                     className="
+                                      jn-row-action jn-row-action--treat
                                       inline-flex
                                       items-center
                                       gap-2
@@ -2753,7 +2825,7 @@ function NotificationsPage() {
                                   type="button"
                                   onClick={() => archiveView === 'archivees' ? restoreNotification(notification) : archiveNotification(notification)}
                                   disabled={actionLoading}
-                                  className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white p-2 text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+                                  className="jn-row-action jn-row-action--archive inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white p-2 text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
                                   aria-label={archiveView === 'archivees' ? 'Restaurer la notification' : 'Archiver la notification'}
                                   title={archiveView === 'archivees' ? 'Restaurer' : 'Archiver'}
                                 >
@@ -2771,6 +2843,7 @@ function NotificationsPage() {
                                     actionLoading
                                   }
                                   className="
+                                    jn-row-action jn-row-action--delete
                                     inline-flex
                                     items-center
                                     justify-center
@@ -2829,7 +2902,7 @@ function NotificationsPage() {
           role={toast.type === 'error' ? 'alert' : 'status'}
           aria-live={toast.type === 'error' ? 'assertive' : 'polite'}
         >
-          <div className={`flex items-start gap-3 rounded-2xl border p-4 shadow-xl ${
+          <div className={`jn-toast-card flex items-start gap-3 rounded-2xl border p-4 shadow-xl ${
             toast.type === 'error'
               ? 'border-red-200 bg-white text-red-800'
               : 'border-emerald-200 bg-white text-emerald-800'
@@ -2866,7 +2939,7 @@ function NotificationsPage() {
             aria-modal="true"
             aria-labelledby="delete-notification-title"
             aria-describedby="delete-notification-description"
-            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+            className="jn-modal-surface w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="flex items-start gap-3">
@@ -2965,6 +3038,7 @@ function NotificationsPage() {
             aria-labelledby="notification-detail-title"
             onMouseDown={(event) => event.stopPropagation()}
             className="
+              jn-modal-surface
               max-h-[92vh]
               w-full
               max-w-3xl

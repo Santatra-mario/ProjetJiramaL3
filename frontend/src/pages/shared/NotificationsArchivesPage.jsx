@@ -19,6 +19,7 @@ import Header from '../../components/admin/Header.jsx';
 import AgentLayout from '../../components/admin/agent/AgentLayout.jsx';
 import ResponsableLayout from '../../components/admin/responsable/ResponsableLayout.jsx';
 import NotificationConfirmDialog from '../../components/notifications/NotificationConfirmDialog.jsx';
+import SuiviConsommationIndication from '../../components/notifications/SuiviConsommationIndication.jsx';
 import { signalerChangementNotifications } from '../../components/admin/agent/notificationsAgent.js';
 import { signalerChangementNotificationsResponsable } from '../../components/admin/responsable/notificationsResponsable.js';
 
@@ -215,6 +216,7 @@ function ArchiveContent({ role }) {
                       </div>
                     </div>
                     <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-jr-doux">{notification.message || 'Aucun message disponible.'}</p>
+                    <SuiviConsommationIndication notification={notification} />
                     <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-jr-faible">
                       <span className="inline-flex items-center gap-1.5"><Clock3 size={13} /> Créée le {formatDate(notification.created_at || notification.date_envoi)}</span>
                       <span>Archivée le {formatDate(notification.archive_le)}</span>

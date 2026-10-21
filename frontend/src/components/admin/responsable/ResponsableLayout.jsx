@@ -26,6 +26,7 @@ import {
 import axiosClient from '../../../api/axiosClient';
 import AdminShell from '../AdminShell.jsx';
 import BoutonTheme from '../../BoutonTheme.jsx';
+import DisplayControls from '../../DisplayControls.jsx';
 import {
   ToastProvider,
   useToast,
@@ -478,6 +479,9 @@ function ContenuLayout({ children, title }) {
 
             {/* Droite */}
             <div className="flex items-center gap-3">
+              {/* Réglages de lisibilité et plein écran */}
+              <DisplayControls />
+
               {/* Mode clair / sombre */}
               <BoutonTheme integre />
 
