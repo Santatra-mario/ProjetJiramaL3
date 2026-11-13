@@ -18,6 +18,7 @@ import axiosClient from '../../api/axiosClient.js';
 import Sidebar from '../../components/admin/Sidebar.jsx';
 import Header from '../../components/admin/Header.jsx';
 import AdminShell from '../../components/admin/AdminShell.jsx';
+import CreationTransition, { useCreationTransition } from '../../components/ui/CreationTransition.jsx';
 import {
   EtatErreur,
   EtatVide,
@@ -26,6 +27,8 @@ import {
 
 function UsersPage() {
   const navigate = useNavigate();
+
+  const { transitionActive, jouerTransition } = useCreationTransition();
 
   const [users, setUsers] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
@@ -321,6 +324,9 @@ function UsersPage() {
           response.data.message ||
             'Utilisateur créé avec succès.'
         );
+
+        // Bref écran de chargement JIRAMA pendant le rechargement de la liste.
+        jouerTransition();
       }
 
       await loadUsers();
@@ -1005,6 +1011,7 @@ function UsersPage() {
           </div>
         </div>
       )}
+      <CreationTransition active={transitionActive} />
     </AdminShell>
   );
 }

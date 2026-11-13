@@ -69,8 +69,8 @@ router.post(
   '/',
   verifyToken,
   checkRole(
-    'ADMINISTRATEUR',
-    'AGENT'
+    'AGENT',
+    'RESPONSABLE'
   ),
   createReleve
 );
@@ -85,8 +85,8 @@ router.put(
   '/:id',
   verifyToken,
   checkRole(
-    'ADMINISTRATEUR',
-    'AGENT'
+    'AGENT',
+    'RESPONSABLE'
   ),
   updateReleve
 );

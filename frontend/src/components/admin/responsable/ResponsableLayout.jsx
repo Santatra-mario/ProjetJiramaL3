@@ -14,8 +14,10 @@ import {
 import {
   Bell,
   ChevronRight,
+  GitCompare,
   LayoutDashboard,
   LogOut,
+  MapPin,
   Menu,
   ShieldCheck,
   Settings,
@@ -32,6 +34,7 @@ import {
   useToast,
 } from '../../ui/ToastProvider.jsx';
 import { traiterErreurSession } from './sessionResponsable.js';
+import ConfirmationDeconnexion from '../../ui/ConfirmationDeconnexion.jsx';
 
 const INTERVALLE_COMPTEUR = 30000;
 
@@ -47,6 +50,18 @@ const menuItems = [
     path: '/dashboard/responsable/anomalies',
     icon: TriangleAlert,
     description: 'Supervision des alertes',
+  },
+  {
+    label: 'Planning des contrôles',
+    path: '/dashboard/responsable/controles',
+    icon: MapPin,
+    description: 'Missions et carte des abonnés',
+  },
+  {
+    label: 'Comparaison',
+    path: '/dashboard/responsable/comparaison',
+    icon: GitCompare,
+    description: 'Écarts de consommation',
   },
   {
     label: 'Notifications',
@@ -83,6 +98,7 @@ function ContenuLayout({ children, title }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const [user, setUser] = useState(null);
+  const [deconnexionDemandee, setDeconnexionDemandee] = useState(false);
 
   const dernierCompteur = useRef(null);
   const cheminActuel = useRef(location.pathname);
@@ -443,7 +459,7 @@ function ContenuLayout({ children, title }) {
         <div className="border-t border-jr-bordure p-4">
           <button
             type="button"
-            onClick={logout}
+            onClick={() => setDeconnexionDemandee(true)}
             className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-jr-err transition hover:bg-jr-err-pale focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-elec motion-reduce:transition-none"
           >
             <LogOut size={20} aria-hidden="true" />
@@ -451,6 +467,15 @@ function ContenuLayout({ children, title }) {
           </button>
         </div>
       </aside>
+
+      <ConfirmationDeconnexion
+        open={deconnexionDemandee}
+        onAnnuler={() => setDeconnexionDemandee(false)}
+        onConfirmer={() => {
+          setDeconnexionDemandee(false);
+          logout();
+        }}
+      />
 
       {/* ---------- Contenu ---------- */}
       <div className="min-h-screen lg:pl-72">

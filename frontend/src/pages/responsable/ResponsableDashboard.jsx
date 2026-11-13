@@ -39,6 +39,7 @@ import ResponsableLayout from '../../components/admin/responsable/ResponsableLay
 import { traiterErreurSession } from '../../components/admin/responsable/sessionResponsable.js';
 import { useToast } from '../../components/ui/ToastProvider.jsx';
 import { COULEURS } from '../../theme/couleurs.js';
+import { ecouterChangementAbonnes } from '../../hooks/abonnesSync.js';
 
 /* =========================================================
    CONSTANTES
@@ -730,6 +731,11 @@ function DashboardContenu() {
 
   chargerRef.current = charger;
 
+  useEffect(
+    () => ecouterChangementAbonnes(() => chargerRef.current?.()),
+    []
+  );
+
   /* ---------- Premier chargement + actualisation automatique ---------- */
 
   useEffect(() => {
@@ -897,7 +903,7 @@ function DashboardContenu() {
                 subtitle="Saisies enregistrées"
                 icon={ClipboardList}
                 tone="bleu"
-                onClick={() => navigate('/dashboard/admin/releves')}
+                onClick={() => navigate('/dashboard/responsable/releves')}
               />
               <StatCard
                 index={1}
@@ -930,17 +936,17 @@ function DashboardContenu() {
           <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <StatCard
               index={4}
-              title="Abonnés"
-              value={number(stats.abonnes)}
-              subtitle="Base totale"
+              title="Abonnés actifs"
+              value={number(stats.abonnesActifs)}
+              subtitle={`${number(stats.abonnes)} abonnés visibles, hors supprimés`}
               icon={Users}
               tone="neutre"
             />
             <StatCard
               index={5}
-              title="Compteurs actifs"
+              title="Compteurs en service"
               value={`${number(stats.compteursActifs)} / ${number(stats.compteurs)}`}
-              subtitle="Compteurs en service"
+              subtitle="En service / liés à un abonné actif"
               icon={Gauge}
               tone="ok"
             />
@@ -948,7 +954,7 @@ function DashboardContenu() {
               index={6}
               title="Agents actifs"
               value={number(stats.agentsActifs)}
-              subtitle="Équipe opérationnelle"
+              subtitle="Comptes actifs avec le rôle AGENT"
               icon={Users}
               tone="bleu"
             />

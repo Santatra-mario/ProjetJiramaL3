@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { Check, Droplets, RefreshCw, Save, Search, X, Zap } from 'lucide-react';
 
 import useModalA11y from './useModalA11y.js';
-import { STATUTS, TYPES, versChampDate } from './compteursUtils.js';
+import { formatDate, STATUTS, TYPES, versChampDate } from './compteursUtils.js';
 
 const LIBELLE_ABONNE = (a) =>
   `${a.numero_abonne} - ${a.prenom ? `${a.prenom} ${a.nom}` : a.nom}`;
@@ -333,6 +333,11 @@ function CompteurModal({
                 onChange={handleChange}
                 className="jr-field w-full rounded-md border px-3 py-2.5 text-sm"
               />
+              {form.date_installation && (
+                <p className="mt-1.5 text-xs text-jr-doux">
+                  Date enregistrée : <span className="font-semibold text-jr-texte">{formatDate(form.date_installation)}</span>
+                </p>
+              )}
             </div>
 
             {/* Statut */}

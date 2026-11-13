@@ -224,6 +224,7 @@ async function synchroniserNotificationSuiviReleve(releveId) {
       r.ancien_index,
       r.nouvel_index,
       r.consommation,
+      r.type_releve,
       r.created_by,
       c.numero_compteur,
       c.type AS type_compteur,
@@ -242,6 +243,19 @@ async function synchroniserNotificationSuiviReleve(releveId) {
   }
 
   const releve = currentResult.rows[0];
+
+  // Un premier relevé (index initial) ne représente aucune consommation
+  // calculable : il ne déclenche donc aucune notification de suivi de
+  // consommation, ni classification, ni anomalie.
+  if (String(releve.type_releve || '').trim().toUpperCase() === 'INITIAL') {
+    return {
+      created: 0,
+      updated: 0,
+      releveId: id,
+      classification: 'PREMIER_RELEVE',
+    };
+  }
+
   const currentDate = releve.date_releve;
   const historiqueResult = await pool.query(`
     SELECT

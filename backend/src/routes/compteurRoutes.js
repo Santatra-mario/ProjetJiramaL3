@@ -46,14 +46,15 @@ router.get(
 /*
 =========================================================
 CRÉATION / MODIFICATION
-Seul ADMINISTRATEUR
+Autorisé à l’agent pour la saisie gestionnaire locale,
+mais la modification complète reste réservée à l’administrateur.
 =========================================================
 */
 
 router.post(
   '/',
   verifyToken,
-  checkRole('ADMINISTRATEUR'),
+  checkRole('ADMINISTRATEUR', 'AGENT'),
   createCompteur
 );
 

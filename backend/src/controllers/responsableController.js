@@ -55,6 +55,11 @@ const ANOMALIES_SQL = `
     FROM anomalies x
     INNER JOIN releves r
       ON r.id = x.releve_id
+    INNER JOIN compteurs c
+      ON c.id = r.compteur_id
+    INNER JOIN abonnes ab
+      ON ab.id = c.abonne_id
+    WHERE LOWER(TRIM(ab.statut)) <> 'supprime'
   )
 `;
 
@@ -331,16 +336,38 @@ async function getResponsableDashboard(req, res) {
     ] = await Promise.all([
       pool.query(`
         SELECT
-          (SELECT COUNT(*)::int FROM abonnes) AS abonnes,
-          (SELECT COUNT(*)::int FROM compteurs) AS compteurs,
-          (SELECT COUNT(*)::int FROM compteurs WHERE UPPER(TRIM(statut)) = 'ACTIF') AS compteurs_actifs,
-          (SELECT COUNT(*)::int FROM releves WHERE date_releve >= DATE_TRUNC('month', CURRENT_DATE) AND date_releve < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month') AS releves_mois,
+          (SELECT COUNT(*)::int FROM abonnes WHERE LOWER(TRIM(statut)) <> 'supprime') AS abonnes,
+          (SELECT COUNT(*)::int FROM abonnes WHERE LOWER(TRIM(statut)) = 'actif') AS abonnes_actifs,
+          (
+            SELECT COUNT(DISTINCT c.id)::int
+            FROM compteurs c
+            INNER JOIN abonnes a ON a.id = c.abonne_id
+            WHERE LOWER(TRIM(a.statut)) = 'actif'
+          ) AS compteurs,
+          (
+            SELECT COUNT(DISTINCT c.id)::int
+            FROM compteurs c
+            INNER JOIN abonnes a ON a.id = c.abonne_id
+            WHERE LOWER(TRIM(a.statut)) = 'actif'
+              AND UPPER(TRIM(c.statut)) = 'ACTIF'
+          ) AS compteurs_actifs,
+          (
+            SELECT COUNT(*)::int
+            FROM releves r
+            INNER JOIN compteurs c ON c.id = r.compteur_id
+            INNER JOIN abonnes ab ON ab.id = c.abonne_id
+            WHERE LOWER(TRIM(ab.statut)) <> 'supprime'
+              AND r.date_releve >= DATE_TRUNC('month', CURRENT_DATE)
+              AND r.date_releve < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'
+          ) AS releves_mois,
 
           (
             SELECT COALESCE(SUM(r.consommation), 0)
             FROM releves r
             INNER JOIN compteurs c ON c.id = r.compteur_id
-            WHERE UPPER(TRIM(c.type)) = 'EAU'
+            INNER JOIN abonnes ab ON ab.id = c.abonne_id
+            WHERE LOWER(TRIM(ab.statut)) <> 'supprime'
+              AND UPPER(TRIM(c.type)) = 'EAU'
               AND r.date_releve >= DATE_TRUNC('month', CURRENT_DATE)
               AND r.date_releve < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'
           ) AS consommation_eau_mois,
@@ -349,7 +376,9 @@ async function getResponsableDashboard(req, res) {
             SELECT COALESCE(SUM(r.consommation), 0)
             FROM releves r
             INNER JOIN compteurs c ON c.id = r.compteur_id
-            WHERE UPPER(TRIM(c.type)) IN ('ELECTRICITE', 'ÉLECTRICITÉ')
+            INNER JOIN abonnes ab ON ab.id = c.abonne_id
+            WHERE LOWER(TRIM(ab.statut)) <> 'supprime'
+              AND UPPER(TRIM(c.type)) IN ('ELECTRICITE', 'ÉLECTRICITÉ')
               AND r.date_releve >= DATE_TRUNC('month', CURRENT_DATE)
               AND r.date_releve < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'
           ) AS consommation_electricite_mois,
@@ -373,8 +402,8 @@ async function getResponsableDashboard(req, res) {
         SELECT
           TO_CHAR(mois, 'Mon') AS mois_court,
           TO_CHAR(mois, 'YYYY-MM') AS periode,
-          COALESCE(SUM(CASE WHEN UPPER(TRIM(c.type)) = 'EAU' THEN r.consommation ELSE 0 END), 0) AS eau,
-          COALESCE(SUM(CASE WHEN UPPER(TRIM(c.type)) IN ('ELECTRICITE', 'ÉLECTRICITÉ') THEN r.consommation ELSE 0 END), 0) AS electricite
+          COALESCE(SUM(CASE WHEN LOWER(TRIM(ab.statut)) <> 'supprime' AND UPPER(TRIM(c.type)) = 'EAU' THEN r.consommation ELSE 0 END), 0) AS eau,
+          COALESCE(SUM(CASE WHEN LOWER(TRIM(ab.statut)) <> 'supprime' AND UPPER(TRIM(c.type)) IN ('ELECTRICITE', 'ÉLECTRICITÉ') THEN r.consommation ELSE 0 END), 0) AS electricite
         FROM generate_series(
           DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '11 months',
           DATE_TRUNC('month', CURRENT_DATE),
@@ -385,6 +414,7 @@ async function getResponsableDashboard(req, res) {
          AND r.date_releve < mois + INTERVAL '1 month'
         LEFT JOIN compteurs c
           ON c.id = r.compteur_id
+        LEFT JOIN abonnes ab ON ab.id = c.abonne_id
         GROUP BY mois
         ORDER BY mois
       `),
@@ -428,6 +458,7 @@ async function getResponsableDashboard(req, res) {
         INNER JOIN abonnes ab
           ON ab.id = c.abonne_id
         WHERE UPPER(TRIM(a.statut)) IN ('NOUVELLE', 'EN_COURS')
+          AND LOWER(TRIM(ab.statut)) <> 'supprime'
         ORDER BY
           CASE a.niveau
             WHEN 'CRITIQUE' THEN 1
@@ -480,6 +511,7 @@ async function getResponsableDashboard(req, res) {
       },
       stats: {
         abonnes: toNumber(row.abonnes),
+        abonnesActifs: toNumber(row.abonnes_actifs),
         compteurs: toNumber(row.compteurs),
         compteursActifs: toNumber(row.compteurs_actifs),
         relevesMois: toNumber(row.releves_mois),
@@ -555,6 +587,8 @@ async function getResponsableNotifications(req, res) {
           a.statut AS statut_anomalie,
           a.commentaire AS motif_administrateur,
           COALESCE(a.type_anomalie, n.classification) AS type_anomalie,
+          CASE WHEN campagne_mission.id IS NOT NULL THEN mission_notification.id END AS mission_id,
+          CASE WHEN campagne_mission.id IS NOT NULL THEN campagne_mission.mois::text END AS mission_mois,
           COALESCE(a.valeur_detectee, r.consommation) AS valeur_detectee,
           COALESCE(a.valeur_reference, n.reference_consommation) AS valeur_reference,
           COALESCE(
@@ -579,11 +613,19 @@ async function getResponsableNotifications(req, res) {
         LEFT JOIN releves r ON r.id = COALESCE(a.releve_id, n.releve_id)
         LEFT JOIN compteurs c ON c.id = r.compteur_id
         LEFT JOIN abonnes ab ON ab.id = c.abonne_id
+        LEFT JOIN missions_controle mission_notification
+          ON n.type = 'MISSION_CONTROLE'
+          AND mission_notification.id = NULLIF(
+            SUBSTRING(n.evenement_cle FROM '^mission:v2:([0-9]+):'), ''
+          )::int
+        LEFT JOIN campagnes_controle campagne_mission
+          ON campagne_mission.id = mission_notification.campagne_id
+          AND campagne_mission.created_by = $2
         WHERE LOWER(TRIM(n.destinataire)) = $1
           AND n.masquee_le IS NULL
         ORDER BY n.created_at DESC, n.id DESC
       `,
-      [email]
+      [email, user.id]
     );
 
     return res.status(200).json({

@@ -24,6 +24,7 @@ async function getCompteurs(req, res) {
       FROM compteurs c
       INNER JOIN abonnes a
         ON a.id = c.abonne_id
+       AND LOWER(TRIM(a.statut)) = 'actif'
       ORDER BY c.id DESC
     `);
 
@@ -79,9 +80,13 @@ async function getCompteurById(req, res) {
       INNER JOIN abonnes a
         ON a.id = c.abonne_id
       WHERE c.id = $1
+        AND (
+          UPPER(TRIM(COALESCE($2::text, ''))) <> 'AGENT'
+          OR LOWER(TRIM(a.statut)) = 'actif'
+        )
       LIMIT 1
       `,
-      [id]
+      [id, req.user?.role || '']
     );
 
     if (result.rows.length === 0) {
@@ -210,7 +215,7 @@ async function createCompteur(req, res) {
     }
 
     if (
-      abonneResult.rows[0].statut !== 'actif'
+      String(abonneResult.rows[0].statut || '').trim().toLowerCase() !== 'actif'
     ) {
       return res.status(400).json({
         status: 'error',
@@ -405,7 +410,7 @@ async function updateCompteur(req, res) {
     }
 
     if (
-      abonneResult.rows[0].statut !== 'actif'
+      String(abonneResult.rows[0].statut || '').trim().toLowerCase() !== 'actif'
     ) {
       return res.status(400).json({
         status: 'error',
@@ -533,6 +538,31 @@ async function updateCompteurStatus(req, res) {
         message:
           'Statut invalide.',
       });
+    }
+
+    if (statutNettoye === 'ACTIF') {
+      const abonneResult = await pool.query(
+        `SELECT LOWER(TRIM(a.statut)) AS statut_abonne
+         FROM compteurs c
+         INNER JOIN abonnes a ON a.id = c.abonne_id
+         WHERE c.id = $1
+         LIMIT 1`,
+        [id]
+      );
+
+      if (abonneResult.rows.length === 0) {
+        return res.status(404).json({
+          status: 'error',
+          message: 'Compteur introuvable.',
+        });
+      }
+
+      if (abonneResult.rows[0].statut_abonne !== 'actif') {
+        return res.status(409).json({
+          status: 'error',
+          message: 'Réactivez l’abonné avant d’activer son compteur.',
+        });
+      }
     }
 
     const result = await pool.query(

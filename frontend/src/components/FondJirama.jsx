@@ -180,9 +180,13 @@ function FondJirama({ children, fixe = false, intensite = 'vivant' }) {
         fixe ? 'overflow-clip' : 'overflow-hidden'
       }`}
       style={{
-        background:
-          'linear-gradient(160deg, var(--jr-fond-debut) 0%, var(--jr-fond) 50%, var(--jr-fond-fin) 100%)',
-        backgroundAttachment: fixe ? 'fixed' : undefined,
+        backgroundColor: 'var(--jr-fond)',
+        backgroundImage:
+          'linear-gradient(160deg, color-mix(in srgb, var(--jr-fond-debut) 84%, transparent) 0%, color-mix(in srgb, var(--jr-fond) 84%, transparent) 50%, color-mix(in srgb, var(--jr-fond-fin) 84%, transparent) 100%), url("/images/jirama-background.jpg")',
+        backgroundPosition: 'center, center',
+        backgroundRepeat: 'no-repeat, no-repeat',
+        backgroundSize: 'cover, cover',
+        backgroundAttachment: fixe ? 'fixed, fixed' : 'scroll, scroll',
         color: COULEURS.texte,
       }}
     >

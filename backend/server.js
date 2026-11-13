@@ -8,6 +8,7 @@ const helmet = require('helmet');
 // DATABASE
 // =========================================================
 const pool = require('./src/config/db');
+const { programmerRappelsControles } = require('./src/controllers/controleController');
 
 // =========================================================
 // ROUTES
@@ -45,6 +46,9 @@ const comparaisonRoutes =
 const notificationRoutes =
   require('./src/routes/notificationRoutes');
 
+const geocodageRoutes =
+  require('./src/routes/geocodageRoutes');
+
 const settingsRoutes =
   require('./src/routes/settingsRoutes');
 
@@ -53,6 +57,9 @@ const responsableRoutes =
 
 const agentRoutes =
   require('./src/routes/agentRoutes');
+
+const paiementRoutes =
+  require('./src/routes/paiementRoutes');
 
 // =========================================================
 // APPLICATION EXPRESS
@@ -228,10 +235,26 @@ app.use(
   notificationRoutes
 );
 
+// ---------------------------------------------------------
+// PAIEMENTS DE FACTURE
+// ---------------------------------------------------------
+app.use(
+  '/api/paiements',
+  paiementRoutes
+);
+
 // PARAMÈTRES UTILISATEUR (ADMINISTRATEUR, AGENT, RESPONSABLE)
 app.use(
   '/api/settings',
   settingsRoutes
+);
+
+// ---------------------------------------------------------
+// GÉOCODAGE D'ADRESSES (OpenStreetMap / Nominatim)
+// ---------------------------------------------------------
+app.use(
+  '/api/geocodage',
+  geocodageRoutes
 );
 
 // ---------------------------------------------------------
@@ -476,6 +499,7 @@ const server =
   app.listen(
     PORT,
     () => {
+      programmerRappelsControles();
       console.log('');
       console.log(
         '=========================================='

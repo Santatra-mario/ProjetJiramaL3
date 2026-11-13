@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import {
@@ -6,6 +6,8 @@ import {
   Search,
   Pencil,
   Power,
+  Trash2,
+  Loader2,
   X,
   Save,
   RefreshCw,
@@ -15,6 +17,12 @@ import axiosClient from '../../api/axiosClient.js';
 import Sidebar from '../../components/admin/Sidebar.jsx';
 import Header from '../../components/admin/Header.jsx';
 import AdminShell from '../../components/admin/AdminShell.jsx';
+import CreationTransition, { useCreationTransition } from '../../components/ui/CreationTransition.jsx';
+import AdresseAbonne from '../../components/admin/abonnes/AdresseAbonne.jsx';
+import {
+  ecouterChangementAbonnes,
+  publierChangementAbonnes,
+} from '../../hooks/abonnesSync.js';
 
 /* =========================================================
    OUTILS D'AFFICHAGE
@@ -26,6 +34,8 @@ const FILTRES = [
 ];
 
 const formatNombre = (n) => Number(n || 0).toLocaleString('fr-FR');
+const estAbonneSupprime = (abonne) =>
+  String(abonne?.statut || '').trim().toLowerCase() === 'supprime';
 
 const pourcent = (partie, total) =>
   total ? Math.round((partie / total) * 100) : 0;
@@ -45,6 +55,126 @@ const teinteDe = (numero) => {
   return somme % 2 === 0 ? 'eau' : 'elec';
 };
 
+const PHONE_COUNTRIES = [
+  { code: 'MG', name: 'Madagascar', flag: '🇲🇬', dialCode: '+261', format: [2, 2, 2, 3] },
+  { code: 'FR', name: 'France', flag: '🇫🇷', dialCode: '+33', format: [2, 2, 2, 2, 2] },
+  { code: 'US', name: 'États-Unis', flag: '🇺🇸', dialCode: '+1', format: [3, 3, 4] },
+  { code: 'MU', name: 'Maurice', flag: '🇲🇺', dialCode: '+230', format: [2, 2, 2, 2] },
+  { code: 'RE', name: 'La Réunion', flag: '🇷🇪', dialCode: '+262', format: [2, 2, 2, 2, 2] },
+  { code: 'ZA', name: 'Afrique du Sud', flag: '🇿🇦', dialCode: '+27', format: [2, 3, 3, 3] },
+  { code: 'DE', name: 'Allemagne', flag: '🇩🇪', dialCode: '+49', format: [2, 2, 2, 2, 2] },
+  { code: 'GB', name: 'Royaume-Uni', flag: '🇬🇧', dialCode: '+44', format: [2, 2, 2, 2, 2] },
+  { code: 'CA', name: 'Canada', flag: '🇨🇦', dialCode: '+1', format: [3, 3, 4] },
+  { code: 'CN', name: 'Chine', flag: '🇨🇳', dialCode: '+86', format: [3, 4, 4] },
+];
+
+const PHONE_COUNTRY_MAP = Object.fromEntries(
+  PHONE_COUNTRIES.map((country) => [country.code, country])
+);
+const DEFAULT_PHONE_COUNTRY = PHONE_COUNTRY_MAP.MG;
+
+function normalizePhoneDigits(value) {
+  return String(value ?? '')
+    .replace(/\s+/g, '')
+    .replace(/[^\d+]/g, '')
+    .replace(/^\+/, '');
+}
+
+function getCountryForPhone(phone) {
+  const digits = normalizePhoneDigits(phone).replace(/\+/g, '');
+  if (!digits) return DEFAULT_PHONE_COUNTRY.code;
+
+  for (const country of PHONE_COUNTRIES) {
+    if (digits.startsWith(country.dialCode.replace('+', ''))) {
+      return country.code;
+    }
+  }
+
+  return DEFAULT_PHONE_COUNTRY.code;
+}
+
+function formatLocalPhoneDisplay(phone, countryCode = DEFAULT_PHONE_COUNTRY.code) {
+  const country = PHONE_COUNTRY_MAP[countryCode] || DEFAULT_PHONE_COUNTRY;
+  const digits = normalizePhoneDigits(phone).replace(/\+/g, '');
+  if (!digits) return '';
+
+  const code = country.dialCode.replace('+', '');
+  const localDigits = digits.startsWith(code) ? digits.slice(code.length) : digits;
+  if (!localDigits) return '';
+
+  const chunks = [];
+  let rest = localDigits;
+  const groups = country.format || [2, 2, 2, 2];
+  groups.forEach((length, index) => {
+    if (!rest) return;
+    const chunk = rest.slice(0, length);
+    if (chunk) chunks.push(chunk);
+    rest = rest.slice(length);
+    if (index === groups.length - 1 && rest) {
+      chunks.push(rest);
+      rest = '';
+    }
+  });
+
+  if (rest) chunks.push(rest);
+
+  return chunks.join(' ');
+}
+
+function formatPhoneDisplay(phone, countryCode = DEFAULT_PHONE_COUNTRY.code) {
+  const country = PHONE_COUNTRY_MAP[countryCode] || DEFAULT_PHONE_COUNTRY;
+  const local = formatLocalPhoneDisplay(phone, countryCode);
+  return local ? `${country.dialCode} ${local}` : country.dialCode;
+}
+
+function normalizePhoneForCountry(raw, countryCode = DEFAULT_PHONE_COUNTRY.code) {
+  const country = PHONE_COUNTRY_MAP[countryCode] || DEFAULT_PHONE_COUNTRY;
+  const digits = normalizePhoneDigits(raw).replace(/\+/g, '');
+  if (!digits) return '';
+
+  const code = country.dialCode.replace('+', '');
+  const withoutCountry = digits.startsWith(code) ? digits.slice(code.length) : digits;
+
+  if (country.code === 'MG') {
+    const local = withoutCountry.replace(/^0+/, '');
+    return `+261${local}`;
+  }
+
+  return `+${code}${withoutCountry}`;
+}
+
+function validatePhoneNumber(phone, countryCode = DEFAULT_PHONE_COUNTRY.code) {
+  const country = PHONE_COUNTRY_MAP[countryCode] || DEFAULT_PHONE_COUNTRY;
+  const normalized = normalizePhoneForCountry(phone, country.code);
+  const digits = normalizePhoneDigits(normalized).replace(/\+/g, '');
+
+  if (!digits) {
+    return { valid: false, message: 'Le numéro de téléphone est requis.' };
+  }
+
+  if (country.code === 'MG') {
+    const local = digits.slice(country.dialCode.replace('+', '').length);
+    if (!/^3\d{8}$/.test(local)) {
+      return {
+        valid: false,
+        message: 'Le numéro malgache doit contenir 9 chiffres après +261 (ex. +261 34 91 42 789).',
+      };
+    }
+    return { valid: true, normalized };
+  }
+
+  const code = country.dialCode.replace('+', '');
+  const local = digits.startsWith(code) ? digits.slice(code.length) : digits;
+  if (local.length < 6 || local.length > 12) {
+    return {
+      valid: false,
+      message: `Le numéro ${country.name} est invalide pour ce pays.`,
+    };
+  }
+
+  return { valid: true, normalized };
+}
+
 const STYLE_TEINTE = {
   eau: {
     backgroundColor: 'var(--jr-eau-pale)',
@@ -62,6 +192,8 @@ const STYLE_TEINTE = {
 function AbonnesPage() {
   const navigate = useNavigate();
 
+  const { transitionActive, jouerTransition } = useCreationTransition();
+
   const [abonnes, setAbonnes] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
 
@@ -78,6 +210,9 @@ function AbonnesPage() {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingAbonne, setEditingAbonne] = useState(null);
+  const [abonneASupprimer, setAbonneASupprimer] = useState(null);
+  const [suppressionId, setSuppressionId] = useState(null);
+  const [erreurSuppression, setErreurSuppression] = useState('');
   const [touched, setTouched] = useState({});
 
   const [form, setForm] = useState({
@@ -85,12 +220,21 @@ function AbonnesPage() {
     nom: '',
     prenom: '',
     adresse: '',
+    quartier: '',
+    commune: '',
+    region: '',
+    fokontany: '',
     telephone: '',
   });
+  const [telephoneCountry, setTelephoneCountry] = useState(DEFAULT_PHONE_COUNTRY.code);
 
   const searchRef = useRef(null);
   const modalRef = useRef(null);
   const closeRef = useRef(null);
+  const suppressionDialogRef = useRef(null);
+  const suppressionCancelRef = useRef(null);
+  const focusAvantSuppressionRef = useRef(null);
+  const suppressionIdRef = useRef(null);
 
   /* ======================================================
      UTILISATEUR CONNECTÉ
@@ -123,7 +267,7 @@ function AbonnesPage() {
   /* ======================================================
      CHARGER LES ABONNÉS
   ====================================================== */
-  const loadAbonnes = async () => {
+  const loadAbonnes = useCallback(async () => {
     try {
       setLoading(true);
       setError('');
@@ -153,21 +297,31 @@ function AbonnesPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [navigate]);
 
   useEffect(() => {
     if (currentUser) {
       loadAbonnes();
     }
-  }, [currentUser]);
+  }, [currentUser, loadAbonnes]);
+
+  useEffect(() => {
+    if (!currentUser) return undefined;
+    return ecouterChangementAbonnes(() => loadAbonnes());
+  }, [currentUser, loadAbonnes]);
 
   /* ======================================================
      FILTRAGE
   ====================================================== */
+  const abonnesVisibles = useMemo(
+    () => abonnes.filter((abonne) => !estAbonneSupprime(abonne)),
+    [abonnes]
+  );
+
   const recherches = useMemo(() => {
     const query = search.trim().toLowerCase();
 
-    return abonnes.filter(
+    return abonnesVisibles.filter(
       (abonne) =>
         !query ||
         [
@@ -175,12 +329,14 @@ function AbonnesPage() {
           abonne.nom,
           abonne.prenom,
           abonne.adresse,
+          abonne.quartier,
+          abonne.commune,
           abonne.telephone,
         ].some((value) =>
           String(value || '').toLowerCase().includes(query)
         )
     );
-  }, [abonnes, search]);
+  }, [abonnesVisibles, search]);
 
   const filteredAbonnes = useMemo(
     () =>
@@ -191,10 +347,10 @@ function AbonnesPage() {
   );
 
   // Compteurs globaux (bande d'indicateurs)
-  const total = abonnes.length;
+  const total = abonnesVisibles.length;
   const nbActifs = useMemo(
-    () => abonnes.filter((a) => a.statut === 'actif').length,
-    [abonnes]
+    () => abonnesVisibles.filter((a) => a.statut === 'actif').length,
+    [abonnesVisibles]
   );
   const nbInactifs = total - nbActifs;
 
@@ -224,8 +380,13 @@ function AbonnesPage() {
       nom: '',
       prenom: '',
       adresse: '',
+      quartier: '',
+      commune: '',
+      region: '',
+      fokontany: '',
       telephone: '',
     });
+    setTelephoneCountry(DEFAULT_PHONE_COUNTRY.code);
 
     setTouched({});
     setError('');
@@ -240,11 +401,18 @@ function AbonnesPage() {
   const openEditModal = (abonne) => {
     setEditingAbonne(abonne);
 
+    const country = getCountryForPhone(abonne.telephone || '');
+    setTelephoneCountry(country);
+
     setForm({
       numero_abonne: abonne.numero_abonne || '',
       nom: abonne.nom || '',
       prenom: abonne.prenom || '',
       adresse: abonne.adresse || '',
+      quartier: abonne.quartier || '',
+      commune: abonne.commune || '',
+      region: abonne.region || '',
+      fokontany: abonne.fokontany || '',
       telephone: abonne.telephone || '',
     });
 
@@ -267,6 +435,66 @@ function AbonnesPage() {
 
   closeRef.current = closeModal;
 
+  const ouvrirConfirmationSuppression = (abonne, event) => {
+    focusAvantSuppressionRef.current = event.currentTarget;
+    setErreurSuppression('');
+    setError('');
+    setSuccess('');
+    setAbonneASupprimer(abonne);
+  };
+
+  const fermerConfirmationSuppression = () => {
+    if (suppressionIdRef.current !== null) return;
+    setAbonneASupprimer(null);
+    setErreurSuppression('');
+  };
+
+  useEffect(() => {
+    if (!abonneASupprimer) {
+      const ancienFocus = focusAvantSuppressionRef.current;
+      if (ancienFocus) {
+        focusAvantSuppressionRef.current = null;
+        requestAnimationFrame(() => {
+          const cible = ancienFocus.isConnected ? ancienFocus : searchRef.current;
+          cible?.focus();
+        });
+      }
+      return undefined;
+    }
+
+    suppressionCancelRef.current?.focus();
+
+    const gererClavier = (event) => {
+      if (event.key === 'Escape' && suppressionIdRef.current === null) {
+        event.preventDefault();
+        setAbonneASupprimer(null);
+        setErreurSuppression('');
+        return;
+      }
+
+      if (event.key !== 'Tab') return;
+      const boutons = Array.from(
+        suppressionDialogRef.current?.querySelectorAll('button:not(:disabled)') || []
+      );
+      if (boutons.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const premier = boutons[0];
+      const dernier = boutons[boutons.length - 1];
+      if (event.shiftKey && document.activeElement === premier) {
+        event.preventDefault();
+        dernier.focus();
+      } else if (!event.shiftKey && document.activeElement === dernier) {
+        event.preventDefault();
+        premier.focus();
+      }
+    };
+
+    window.addEventListener('keydown', gererClavier);
+    return () => window.removeEventListener('keydown', gererClavier);
+  }, [abonneASupprimer]);
+
   /* ======================================================
      CHANGEMENT FORMULAIRE
   ====================================================== */
@@ -284,6 +512,15 @@ function AbonnesPage() {
     setTouched((previous) => ({ ...previous, [name]: true }));
   };
 
+  const handlePhoneChange = (event) => {
+    const next = event.target.value;
+    const nextValue = normalizePhoneForCountry(next, telephoneCountry);
+    setForm((previous) => ({
+      ...previous,
+      telephone: nextValue,
+    }));
+  };
+
   /* ======================================================
      ENREGISTRER
   ====================================================== */
@@ -292,15 +529,31 @@ function AbonnesPage() {
 
     setError('');
     setSuccess('');
+
+    if (form.telephone) {
+      const validation = validatePhoneNumber(form.telephone, telephoneCountry);
+      if (!validation.valid) {
+        setError(validation.message);
+        return;
+      }
+    }
+
     setSaving(true);
 
     try {
+      /* La position GPS (latitude/longitude), la rue et le repère ne sont
+         plus gérés par cette fiche : ils ne sont pas transmis, et le backend
+         conserve donc les valeurs déjà enregistrées par le Responsable. */
       const data = {
         numero_abonne: form.numero_abonne.trim(),
         nom: form.nom.trim(),
         prenom: form.prenom.trim(),
         adresse: form.adresse.trim(),
-        telephone: form.telephone.trim(),
+        quartier: form.quartier.trim(),
+        commune: form.commune.trim(),
+        region: form.region.trim(),
+        fokontany: form.fokontany.trim(),
+        telephone: form.telephone ? validatePhoneNumber(form.telephone, telephoneCountry).normalized : '',
       };
 
       let response;
@@ -312,9 +565,13 @@ function AbonnesPage() {
         );
       } else {
         response = await axiosClient.post('/abonnes', data);
+
+        // Bref écran de chargement JIRAMA pendant le rechargement de la liste.
+        jouerTransition();
       }
 
       setSuccess(response.data.message || 'Opération réalisée avec succès.');
+      publierChangementAbonnes();
 
       await loadAbonnes();
 
@@ -332,19 +589,10 @@ function AbonnesPage() {
   };
 
   /* ======================================================
-     ACTIVER / DÉSACTIVER
+     RÉACTIVER UN ABONNÉ INACTIF
   ====================================================== */
-  const toggleStatus = async (abonne) => {
-    const action = abonne.statut === 'actif' ? 'désactiver' : 'réactiver';
-
-    const confirmed = window.confirm(
-      `Voulez-vous vraiment ${action} l’abonné ${abonne.numero_abonne} ?`
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
+  const reactiverAbonne = async (abonne) => {
+    if (String(abonne.statut || '').trim().toLowerCase() !== 'inactif') return;
     try {
       setError('');
       setSuccess('');
@@ -353,7 +601,18 @@ function AbonnesPage() {
         `/abonnes/${abonne.id}/statut`
       );
 
+      if (response.data?.abonne) {
+        setAbonnes((precedents) =>
+          precedents.map((courant) =>
+            courant.id === response.data.abonne.id
+              ? { ...courant, ...response.data.abonne }
+              : courant
+          )
+        );
+      }
+
       setSuccess(response.data.message || 'Statut modifié avec succès.');
+      publierChangementAbonnes();
 
       await loadAbonnes();
     } catch (err) {
@@ -362,6 +621,43 @@ function AbonnesPage() {
       setError(
         err.response?.data?.message || 'Impossible de modifier le statut.'
       );
+    }
+  };
+
+  /* ======================================================
+     SUPPRIMER DÉFINITIVEMENT APRÈS CONFIRMATION
+  ====================================================== */
+  const confirmerSuppression = async () => {
+    if (!abonneASupprimer || suppressionIdRef.current !== null) return;
+
+    const abonne = abonneASupprimer;
+    suppressionIdRef.current = abonne.id;
+    setSuppressionId(abonne.id);
+    setErreurSuppression('');
+    setError('');
+    setSuccess('');
+
+    try {
+      const response = await axiosClient.delete(`/abonnes/${abonne.id}`);
+      if (response.data?.status !== 'success' || response.data?.deleted !== true) {
+        throw new Error(response.data?.message || 'Le serveur n’a pas confirmé la suppression.');
+      }
+
+      const idSupprime = response.data.abonne?.id ?? abonne.id;
+      setAbonnes((precedents) => precedents.filter((courant) => courant.id !== idSupprime));
+
+      publierChangementAbonnes();
+      setAbonneASupprimer(null);
+      await loadAbonnes();
+      setSuccess(response.data.message);
+    } catch (err) {
+      console.error('Erreur suppression abonné :', err);
+      setErreurSuppression(
+        err.response?.data?.message || err.message || 'Impossible de supprimer cet abonné.'
+      );
+    } finally {
+      suppressionIdRef.current = null;
+      setSuppressionId(null);
     }
   };
 
@@ -785,7 +1081,9 @@ function AbonnesPage() {
                           <Actions
                             abonne={abonne}
                             onEdit={openEditModal}
-                            onToggle={toggleStatus}
+                            onReactivate={reactiverAbonne}
+                            onDelete={ouvrirConfirmationSuppression}
+                            deletingId={suppressionId}
                             auSurvol
                           />
                         </td>
@@ -837,7 +1135,9 @@ function AbonnesPage() {
                       <Actions
                         abonne={abonne}
                         onEdit={openEditModal}
-                        onToggle={toggleStatus}
+                        onReactivate={reactiverAbonne}
+                        onDelete={ouvrirConfirmationSuppression}
+                        deletingId={suppressionId}
                         avecTexte
                       />
                     </div>
@@ -889,6 +1189,84 @@ function AbonnesPage() {
           </div>
         )}
       </div>
+
+      {abonneASupprimer && (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center p-4 backdrop-blur-sm"
+          style={{ backgroundColor: 'color-mix(in srgb, var(--jr-fond) 70%, transparent)' }}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) fermerConfirmationSuppression();
+          }}
+        >
+          <div
+            ref={suppressionDialogRef}
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="titre-suppression-abonne"
+            aria-describedby="description-suppression-abonne"
+            className="jr-verre-fort jr-pop w-full max-w-md rounded-lg border border-jr-bordure p-5 shadow-2xl sm:p-6"
+          >
+            <div className="flex items-start gap-3">
+              <span className="mt-0.5 rounded-md bg-jr-err-pale p-2 text-jr-err">
+                <Trash2 size={19} aria-hidden="true" />
+              </span>
+              <div>
+                <h2 id="titre-suppression-abonne" className="text-lg font-semibold text-jr-titre">
+                  Supprimer définitivement cet abonné ?
+                </h2>
+                <p id="description-suppression-abonne" className="mt-2 text-sm leading-6 text-jr-doux">
+                  Voulez-vous vraiment supprimer l’abonné{' '}
+                  <strong className="text-jr-texte">
+                    {[abonneASupprimer.prenom, abonneASupprimer.nom].filter(Boolean).join(' ') || 'Sans nom'}
+                  </strong>{' '}
+                  portant la référence{' '}
+                  <strong className="font-mono text-jr-texte">{abonneASupprimer.numero_abonne}</strong> ?
+                </p>
+              </div>
+            </div>
+
+            <p className="mt-4 rounded-md border border-jr-bordure bg-jr-fond p-3 text-sm leading-5 text-jr-doux">
+              Les compteurs, relevés, anomalies, missions, notifications et paiements propres à cet abonné seront supprimés définitivement. Les campagnes communes et les données des autres abonnés seront conservées.
+            </p>
+
+            {erreurSuppression && (
+              <p role="alert" className="mt-3 rounded-md border border-jr-err/30 bg-jr-err-pale p-3 text-sm text-jr-err">
+                {erreurSuppression}
+              </p>
+            )}
+
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                ref={suppressionCancelRef}
+                type="button"
+                disabled={suppressionId !== null}
+                onClick={fermerConfirmationSuppression}
+                className="min-h-10 rounded-md border border-jr-bordure-forte px-4 py-2 text-sm font-semibold text-jr-doux transition-colors hover:bg-[var(--jr-eau-pale)] hover:text-jr-texte focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-lien disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                disabled={suppressionId !== null}
+                onClick={confirmerSuppression}
+                className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-jr-err px-4 py-2 text-sm font-semibold text-white transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-err focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {suppressionId !== null ? (
+                  <>
+                    <Loader2 size={16} aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
+                    Suppression…
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={16} aria-hidden="true" />
+                    Confirmer la suppression
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ==================================================
           MODAL AJOUT / MODIFICATION
@@ -996,7 +1374,7 @@ function AbonnesPage() {
                   />
                 </div>
 
-                <div>
+                <div className="min-w-0 sm:col-span-2">
                   <label
                     htmlFor="champ-telephone"
                     className="mb-1.5 block text-sm font-medium text-jr-doux"
@@ -1004,15 +1382,52 @@ function AbonnesPage() {
                     Téléphone
                   </label>
 
-                  <input
-                    id="champ-telephone"
-                    type="text"
-                    name="telephone"
-                    value={form.telephone}
-                    onChange={handleChange}
-                    placeholder="Ex. 034 XX XXX XX"
-                    className="jr-field w-full rounded-md border px-3 py-2.5 text-sm tabular-nums"
-                  />
+                  <div className="flex min-w-0 flex-col overflow-hidden rounded-md border border-jr-bordure bg-white sm:flex-row">
+                    <div className="relative min-w-0 border-b border-jr-bordure sm:w-64 sm:shrink-0 sm:border-b-0 sm:border-r">
+                      <label htmlFor="champ-telephone-pays" className="sr-only">
+                        Pays du téléphone
+                      </label>
+                      <select
+                        id="champ-telephone-pays"
+                        value={telephoneCountry}
+                        onChange={(event) => {
+                          const nextCountry = event.target.value;
+                          setTelephoneCountry(nextCountry);
+                          setForm((previous) => ({
+                            ...previous,
+                            telephone: previous.telephone
+                              ? normalizePhoneForCountry(previous.telephone, nextCountry)
+                              : '',
+                          }));
+                        }}
+                        className="h-11 w-full border-0 bg-transparent px-3 text-sm font-medium text-jr-texte outline-none"
+                      >
+                        {PHONE_COUNTRIES.map((country) => (
+                          <option key={country.code} value={country.code}>
+                            {country.flag} {country.name} ({country.dialCode})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex min-h-11 min-w-0 flex-1 items-center gap-2 px-3">
+                      <span className="shrink-0 text-sm font-semibold text-jr-doux">
+                        {PHONE_COUNTRY_MAP[telephoneCountry]?.dialCode || '+261'}
+                      </span>
+                      <input
+                        id="champ-telephone"
+                        type="tel"
+                        inputMode="tel"
+                        name="telephone"
+                        value={formatLocalPhoneDisplay(form.telephone, telephoneCountry)}
+                        onChange={handlePhoneChange}
+                        placeholder="Ex. 34 91 42 789"
+                        className="jr-field h-11 w-full min-w-0 flex-1 border-0 bg-transparent px-0 py-2.5 font-mono text-base tracking-wide tabular-nums focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                  <p className="mt-1.5 text-xs text-jr-faible">
+                    Format international normalisé, enregistré en E.164.
+                  </p>
                 </div>
 
                 <div className="sm:col-span-2">
@@ -1020,7 +1435,7 @@ function AbonnesPage() {
                     htmlFor="champ-adresse"
                     className="mb-1.5 block text-sm font-medium text-jr-doux"
                   >
-                    Adresse
+                    Adresse détaillée
                   </label>
 
                   <textarea
@@ -1028,11 +1443,18 @@ function AbonnesPage() {
                     name="adresse"
                     value={form.adresse}
                     onChange={handleChange}
-                    rows="3"
-                    placeholder="Quartier, rue, repère"
+                    rows="2"
+                    placeholder="Complément utile à l’Agent : portail, étage, indications d’accès"
                     className="jr-field w-full resize-none rounded-md border px-3 py-2.5 text-sm"
                   />
                 </div>
+
+                <AdresseAbonne
+                  form={form}
+                  onChange={handleChange}
+                  disabled={saving}
+                />
+
               </div>
 
               {error && (
@@ -1080,6 +1502,7 @@ function AbonnesPage() {
           </div>
         </div>
       )}
+      <CreationTransition active={transitionActive} />
     </AdminShell>
   );
 }
@@ -1124,9 +1547,12 @@ function StatutPoint({ status }) {
    ACTIONS : au survol de la ligne sur ordinateur,
    toujours visibles sur mobile
 ========================================================= */
-function Actions({ abonne, onEdit, onToggle, auSurvol = false, avecTexte = false }) {
-  const actif = abonne.statut === 'actif';
-  const libelleStatut = actif ? 'Désactiver' : 'Réactiver';
+function Actions({ abonne, onEdit, onReactivate, onDelete, deletingId, auSurvol = false, avecTexte = false }) {
+  const statut = String(abonne.statut || '').trim().toLowerCase();
+  if (statut === 'supprime') return null;
+
+  const actif = statut === 'actif';
+  const enSuppression = deletingId === abonne.id;
 
   const visibilite = auSurvol
     ? 'md:opacity-0 md:transition-opacity md:group-hover:opacity-100 md:group-focus-within:opacity-100 focus-visible:opacity-100 motion-reduce:transition-none'
@@ -1136,7 +1562,7 @@ function Actions({ abonne, onEdit, onToggle, auSurvol = false, avecTexte = false
     'inline-flex items-center gap-2 rounded-md p-2 text-sm font-medium transition-colors motion-reduce:transition-none';
 
   return (
-    <div className={`flex gap-1 ${auSurvol ? 'justify-end' : ''}`}>
+    <div className="flex justify-end gap-1">
       <button
         type="button"
         onClick={() => onEdit(abonne)}
@@ -1148,19 +1574,34 @@ function Actions({ abonne, onEdit, onToggle, auSurvol = false, avecTexte = false
         {avecTexte && 'Modifier'}
       </button>
 
+      {!actif && (
+        <button
+          type="button"
+          onClick={() => onReactivate(abonne)}
+          title="Réactiver l’abonné"
+          aria-label={`Réactiver l’abonné ${abonne.numero_abonne}`}
+          className={`${base} ${visibilite} text-jr-ok hover:bg-jr-ok-pale focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-ok`}
+        >
+          <Power size={17} aria-hidden="true" />
+          {avecTexte && 'Réactiver'}
+        </button>
+      )}
+
       <button
         type="button"
-        onClick={() => onToggle(abonne)}
-        title={`${libelleStatut} l’abonné`}
-        aria-label={`${libelleStatut} l’abonné ${abonne.numero_abonne}`}
-        className={`${base} ${visibilite} ${
-          actif
-            ? 'text-jr-doux hover:bg-jr-err-pale hover:text-jr-err'
-            : 'text-jr-ok hover:bg-jr-ok-pale'
-        }`}
+        onClick={(event) => onDelete(abonne, event)}
+        disabled={enSuppression}
+        aria-busy={enSuppression}
+        title="Supprimer l’abonné"
+        aria-label={`Supprimer l’abonné ${abonne.numero_abonne}`}
+        className={`${base} min-h-10 min-w-10 text-jr-err transition-colors hover:bg-jr-err-pale focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-err disabled:cursor-not-allowed disabled:opacity-50`}
       >
-        <Power size={17} aria-hidden="true" />
-        {avecTexte && libelleStatut}
+        {enSuppression ? (
+          <Loader2 size={17} aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
+        ) : (
+          <Trash2 size={17} aria-hidden="true" />
+        )}
+        {avecTexte && (enSuppression ? 'Suppression…' : 'Supprimer')}
       </button>
     </div>
   );

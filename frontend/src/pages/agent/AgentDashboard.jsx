@@ -43,6 +43,7 @@ import {
   estAnnulation,
   traiterErreurSession,
 } from '../../components/admin/sessionUtilisateur.js';
+import { ecouterChangementAbonnes } from '../../hooks/abonnesSync.js';
 import { COULEURS } from '../../theme/couleurs.js';
 
 /* =========================================================
@@ -576,13 +577,18 @@ function Contenu() {
     return () => controleur.current?.abort();
   }, [charger]);
 
+  useEffect(
+    () => ecouterChangementAbonnes(() => charger()),
+    [charger]
+  );
+
   const stats = data.stats || {};
 
   const nombreActifs = useNombreAnime(
     loading ? 0 : Number(stats.compteursActifs || 0)
   );
   const nombreAbonnes = useNombreAnime(
-    loading ? 0 : Number(stats.abonnes || 0)
+    loading ? 0 : Number(stats.abonnesActifs || 0)
   );
   const nombreRelevesMois = useNombreAnime(
     loading ? 0 : Number(stats.relevesMois || 0)
@@ -754,7 +760,7 @@ function Contenu() {
               <p className="mt-3 text-5xl font-extrabold tracking-tight text-jr-texte">
                 {formatNumber(nombreActifs, 0)}
                 <span className="ml-2 text-lg font-semibold text-jr-doux">
-                  sur {formatNumber(totalCompteurs, 0)} compteurs
+                  sur {formatNumber(totalCompteurs, 0)} compteurs visibles
                 </span>
               </p>
 
@@ -776,7 +782,7 @@ function Contenu() {
                 <div>
                   <dt className="flex items-center gap-1.5 text-xs font-medium text-jr-faible">
                     <Users size={14} aria-hidden="true" />
-                    Abonnés
+                    Abonnés actifs
                   </dt>
                   <dd className="mt-1 text-xl font-bold text-jr-texte">
                     {formatNumber(nombreAbonnes, 0)}

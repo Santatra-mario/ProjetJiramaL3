@@ -3,6 +3,7 @@ import { Search, RefreshCw, AlertTriangle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import axiosClient from "../../api/axiosClient";
 import ResponsableLayout from "../../components/admin/responsable/ResponsableLayout";
+import { ecouterChangementAbonnes } from '../../hooks/abonnesSync.js';
 
 function formatDate(value) {
   if (!value) return '—';
@@ -65,6 +66,7 @@ export default function ResponsableAnomaliesPage() {
   const [statut, setStatut] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [abonnesRevision, setAbonnesRevision] = useState(0);
 
   async function load() {
     try {
@@ -91,7 +93,11 @@ export default function ResponsableAnomaliesPage() {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [abonnesRevision]);
+
+  useEffect(() => ecouterChangementAbonnes(() => {
+    setAbonnesRevision((revision) => revision + 1);
+  }), []);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

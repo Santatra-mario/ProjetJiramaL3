@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -25,6 +26,7 @@ import AgentLayout from "../../components/admin/agent/AgentLayout";
 import NotificationConfirmDialog from "../../components/notifications/NotificationConfirmDialog.jsx";
 import SuiviConsommationIndication from "../../components/notifications/SuiviConsommationIndication.jsx";
 import { signalerChangementNotifications } from "../../components/admin/agent/notificationsAgent.js";
+import { ecouterChangementAbonnes } from '../../hooks/abonnesSync.js';
 
 
 function formatDateTime(
@@ -155,6 +157,7 @@ function AgentNotificationsPage() {
 
   const [pendingAction, setPendingAction] = useState(null);
   const [actionBusy, setActionBusy] = useState(false);
+  const loadingNotificationsRef = useRef(false);
 
 
   const [
@@ -164,13 +167,13 @@ function AgentNotificationsPage() {
     useState('');
 
 
-  async function loadNotifications() {
+  async function loadNotifications({ silent = false } = {}) {
+    if (loadingNotificationsRef.current) return;
+    loadingNotificationsRef.current = true;
 
     try {
 
-      setLoading(
-        true
-      );
+      if (!silent) setLoading(true);
 
       setError('');
 
@@ -242,9 +245,8 @@ function AgentNotificationsPage() {
 
     } finally {
 
-      setLoading(
-        false
-      );
+      if (!silent) setLoading(false);
+      loadingNotificationsRef.current = false;
 
     }
 
@@ -255,10 +257,23 @@ function AgentNotificationsPage() {
     () => {
 
       loadNotifications();
+      const refreshWhenVisible = () => {
+        if (document.visibilityState === 'visible') loadNotifications({ silent: true });
+      };
+      const intervalId = window.setInterval(refreshWhenVisible, 30000);
+      window.addEventListener('focus', refreshWhenVisible);
+      document.addEventListener('visibilitychange', refreshWhenVisible);
 
+      return () => {
+        window.clearInterval(intervalId);
+        window.removeEventListener('focus', refreshWhenVisible);
+        document.removeEventListener('visibilitychange', refreshWhenVisible);
+      };
     },
     []
   );
+
+  useEffect(() => ecouterChangementAbonnes(() => loadNotifications({ silent: true })), []);
 
 
   const unread =
@@ -330,6 +345,13 @@ function AgentNotificationsPage() {
 
     }
 
+  }
+
+  async function ouvrirMission(notification) {
+    const missionId = Number(notification?.mission_id);
+    if (!Number.isInteger(missionId) || missionId <= 0) return;
+    if (notification.statut === 'EN_ATTENTE') await markAsRead(notification.id);
+    navigate(`/dashboard/agent/missions?mission=${missionId}`);
   }
 
 
@@ -795,6 +817,16 @@ function AgentNotificationsPage() {
                             notification.message
                           }
                         </p>
+
+                        {notification.mission_id && (
+                          <button
+                            type="button"
+                            onClick={() => ouvrirMission(notification)}
+                            className="mt-3 inline-flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-3.5 py-2 text-sm font-semibold text-blue-800 transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                          >
+                            Ouvrir la mission #{notification.mission_id}
+                          </button>
+                        )}
 
                         <SuiviConsommationIndication notification={notification} />
 

@@ -7,6 +7,34 @@
 
 export const TAILLES_PAGE = [10, 15, 25, 50];
 
+/* N'afficher le nom qu'au début d'un groupe adjacent abonné/compteur/service. */
+export function estDebutGroupeReleves(releves = [], index = 0) {
+  const releve = releves[index];
+  const precedent = releves[index - 1];
+
+  if (
+    !releve ||
+    !precedent ||
+    releve.abonne_id == null ||
+    precedent.abonne_id == null ||
+    releve.compteur_id == null ||
+    precedent.compteur_id == null
+  ) {
+    return true;
+  }
+
+  const service = String(releve.type_compteur || '').trim().toUpperCase();
+  const servicePrecedent = String(precedent.type_compteur || '').trim().toUpperCase();
+
+  if (!service || !servicePrecedent) return true;
+
+  return (
+    String(releve.abonne_id) !== String(precedent.abonne_id) ||
+    String(releve.compteur_id) !== String(precedent.compteur_id) ||
+    service !== servicePrecedent
+  );
+}
+
 /* Date locale au format AAAA-MM-JJ */
 export function dateIso(date = new Date()) {
   const annee = date.getFullYear();

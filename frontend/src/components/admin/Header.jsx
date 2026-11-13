@@ -1,7 +1,69 @@
 import { Menu, Bell, ChevronDown } from 'lucide-react';
 
+import { useLocation } from 'react-router-dom';
+
 import BoutonTheme from '../BoutonTheme.jsx';
 import DisplayControls from '../DisplayControls.jsx';
+
+/* =========================================================
+   TITRES PAR ROUTE
+   Le titre et le surtitre de l'en-tête dérivent de l'URL
+   affichée : une route = un intitulé exact.
+========================================================= */
+
+const TITRES_PAR_ROUTE = {
+  '/dashboard/admin': 'Tableau de bord administrateur',
+  '/dashboard/admin/utilisateurs': 'Utilisateurs',
+  '/dashboard/admin/abonnes': 'Abonnés',
+  '/dashboard/admin/compteurs': 'Compteurs',
+  '/dashboard/admin/releves': 'Relevés',
+  '/dashboard/admin/anomalies': 'Anomalies',
+  '/dashboard/admin/comparaison': 'Comparaison',
+  '/dashboard/admin/notifications': 'Notifications',
+  '/dashboard/admin/statistiques': 'Statistiques',
+  '/dashboard/admin/graphiques': 'Graphiques',
+  '/dashboard/admin/parametres': 'Paramètres',
+
+  '/dashboard/agent': 'Tableau de bord agent',
+  '/dashboard/agent/compteurs': 'Compteurs',
+  '/dashboard/agent/abonnes': 'Abonnés',
+  '/dashboard/agent/releves': 'Relevés',
+  '/dashboard/agent/anomalies': 'Anomalies',
+  '/dashboard/agent/notifications': 'Notifications',
+  '/dashboard/agent/parametres': 'Paramètres',
+
+  '/dashboard/responsable': 'Tableau de bord responsable',
+  '/dashboard/responsable/anomalies': 'Anomalies',
+  '/dashboard/responsable/notifications': 'Notifications',
+  '/dashboard/responsable/parametres': 'Paramètres',
+};
+
+const SURTITRES_PAR_ESPACE = {
+  '/dashboard/admin': 'Administration',
+  '/dashboard/agent': 'Espace agent',
+  '/dashboard/responsable': 'Espace responsable',
+};
+
+function espaceDePathname(pathname) {
+  return Object.keys(SURTITRES_PAR_ESPACE)
+    .filter((racine) => pathname === racine || pathname.startsWith(`${racine}/`))
+    .sort((a, b) => b.length - a.length)[0];
+}
+
+function titreDePathname(pathname) {
+  const connu = TITRES_PAR_ROUTE[pathname];
+  if (connu) return connu;
+
+  // Fallback : dernier segment de l'URL, lisible.
+  const segments = pathname.split('/').filter(Boolean);
+  const dernier = segments[segments.length - 1] || '';
+  if (!dernier) return 'Tableau de bord';
+  return dernier.charAt(0).toUpperCase() + dernier.slice(1);
+}
+
+/* =========================================================
+   HEADER
+========================================================= */
 
 function Header({
   onOpenSidebar,
@@ -10,6 +72,11 @@ function Header({
   notificationCount = 0,
   user,
 }) {
+  const { pathname } = useLocation();
+
+  const surtitre = SURTITRES_PAR_ESPACE[espaceDePathname(pathname)] || 'Administration';
+  const titre = titreDePathname(pathname);
+
   const nomComplet = user
     ? `${user.prenom || ''} ${user.nom || ''}`.trim()
     : 'Administrateur';
@@ -36,10 +103,10 @@ function Header({
 
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-wider text-jr-lien">
-              Administration
+              {surtitre}
             </p>
             <h1 className="truncate text-xl font-bold text-jr-titre sm:text-2xl">
-              Tableau de bord administrateur
+              {titre}
             </h1>
           </div>
         </div>
@@ -86,7 +153,7 @@ function Header({
               <p className="max-w-32 truncate text-sm font-semibold text-jr-texte">
                 {nomComplet}
               </p>
-              <p className="text-xs text-jr-faible">Administrateur</p>
+              <p className="text-xs text-jr-faible">{surtitre}</p>
             </div>
 
             <ChevronDown size={16} aria-hidden="true" className="text-jr-faible" />

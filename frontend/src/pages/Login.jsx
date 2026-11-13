@@ -127,12 +127,13 @@ function Login() {
     <FondJirama>
       <style>{`
         .jl-page{min-height:100svh;position:relative;isolation:isolate;overflow:hidden;color:#eaf2ff;background:#071426}
-        .jl-page:before{content:"";position:absolute;inset:0;z-index:-2;background:radial-gradient(ellipse at 12% 18%,rgba(18,111,191,.26),transparent 42%),radial-gradient(ellipse at 88% 84%,rgba(12,190,153,.13),transparent 38%),#071426}
+        .jl-page:before{content:"";position:absolute;inset:0;z-index:-2;background:linear-gradient(180deg,rgba(4,13,26,.80) 0%,rgba(5,18,34,.56) 40%,rgba(4,14,28,.72) 72%,rgba(3,11,22,.90) 100%),radial-gradient(ellipse at 12% 18%,rgba(18,111,191,.34),transparent 46%),radial-gradient(ellipse at 88% 84%,rgba(12,190,153,.16),transparent 42%),url("/images/jirama-cover.jpg") 50% 44%/cover no-repeat,#071426}
         .jl-orb{position:absolute;border-radius:50%;pointer-events:none;opacity:.7;animation:jl-float 12s ease-in-out infinite}
         .jl-orb-a{width:360px;height:360px;top:-180px;left:8%;background:radial-gradient(circle,rgba(27,151,236,.2),transparent 70%)}
         .jl-orb-b{width:420px;height:420px;right:-190px;bottom:-190px;background:radial-gradient(circle,rgba(27,210,167,.17),transparent 70%);animation-delay:-5s}
         .jl-shell{width:min(1120px,100%);margin:auto;display:grid;grid-template-columns:minmax(0,1.04fr) minmax(390px,.96fr);border:1px solid rgba(155,190,230,.18);border-radius:28px;overflow:hidden;background:rgba(10,27,48,.9);box-shadow:0 32px 100px rgba(0,0,0,.35);backdrop-filter:blur(18px)}
-        .jl-showcase{position:relative;min-height:650px;padding:46px 44px 38px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;background:linear-gradient(150deg,rgba(13,66,111,.9),rgba(7,35,63,.97) 58%,rgba(5,47,55,.97))}
+        .jl-showcase{position:relative;min-height:650px;padding:46px 44px 38px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;background:linear-gradient(150deg,rgba(13,66,111,.92),rgba(7,35,63,.96) 58%,rgba(5,47,55,.96))}
+        .jl-showcase:before{content:"";position:absolute;inset:-10px;z-index:0;pointer-events:none;background:url("/images/login-fond.jpg") 50% 62%/168% auto no-repeat;filter:blur(6px) saturate(.9);opacity:.55;-webkit-mask-image:linear-gradient(180deg,transparent 0,rgba(0,0,0,.4) 9%,#000 24%,#000 86%,rgba(0,0,0,.45) 100%);mask-image:linear-gradient(180deg,transparent 0,rgba(0,0,0,.4) 9%,#000 24%,#000 86%,rgba(0,0,0,.45) 100%)}
         .jl-showcase:after{content:"";position:absolute;width:460px;height:460px;right:-210px;top:24%;border:1px solid rgba(151,215,255,.15);border-radius:50%;box-shadow:0 0 0 36px rgba(151,215,255,.025),0 0 0 72px rgba(151,215,255,.025);pointer-events:none}
         .jl-logo{display:inline-flex;align-items:center;justify-content:center;width:max-content;max-width:100%;padding:11px 15px;border-radius:15px;background:#fff;box-shadow:0 12px 32px rgba(0,0,0,.16)}
         .jl-logo img{display:block;height:46px;width:auto;max-width:180px;object-fit:contain}
@@ -164,7 +165,7 @@ function Login() {
         .jl-footnote{margin:20px 0 0;text-align:center;color:#9ab0c5;font-size:10px;letter-spacing:.035em}.jl-shake{animation:jl-shake .42s ease-in-out}
         /* Mode clair : les couleurs personnalisées du login doivent suivre html.dark */
         html:not(.dark) .jl-page{color:#0f172a;background:#f3f7fc}
-        html:not(.dark) .jl-page:before{background:radial-gradient(ellipse at 12% 18%,rgba(42,139,214,.15),transparent 42%),radial-gradient(ellipse at 88% 84%,rgba(12,190,153,.10),transparent 38%),#f3f7fc}
+        html:not(.dark) .jl-page:before{background:linear-gradient(180deg,rgba(255,255,255,.92) 0%,rgba(244,249,254,.75) 42%,rgba(232,242,252,.9) 78%,rgba(255,255,255,.95) 100%),radial-gradient(ellipse at 12% 18%,rgba(42,139,214,.18),transparent 46%),radial-gradient(ellipse at 88% 84%,rgba(12,190,153,.12),transparent 40%),url("/images/jirama-cover.jpg") 50% 44%/cover no-repeat,#f3f7fc}
         html:not(.dark) .jl-shell{border-color:rgba(15,95,168,.16);background:rgba(255,255,255,.94);box-shadow:0 28px 80px rgba(15,55,95,.15)}
         html:not(.dark) .jl-form-side{background:rgba(255,255,255,.88)}
         html:not(.dark) .jl-overline{color:#0f5fa8}

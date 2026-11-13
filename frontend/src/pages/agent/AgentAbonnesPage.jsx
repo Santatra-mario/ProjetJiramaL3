@@ -29,6 +29,7 @@ import {
 
 import axiosClient from '../../api/axiosClient';
 import AgentLayout from '../../components/admin/agent/AgentLayout';
+import { ecouterChangementAbonnes } from '../../hooks/abonnesSync.js';
 import { useToast } from '../../components/ui/ToastProvider.jsx';
 import {
   estAnnulation,
@@ -94,6 +95,19 @@ function statutDe(item) {
 
 function lienTelephone(telephone) {
   return `tel:${String(telephone).replace(/[^\d+]/g, '')}`;
+}
+
+function formatPhoneDisplay(telephone) {
+  const digits = String(telephone || '').replace(/\D/g, '');
+  if (!digits) return '';
+
+  if (digits.startsWith('261')) {
+    const local = digits.slice(3);
+    return `+261 ${local.replace(/(\d{2})(?=\d)/g, '$1 ').replace(/\s+$/, '')}`;
+  }
+
+  const clean = digits.replace(/^33/, '');
+  return `+${digits.slice(0, 2)} ${clean.replace(/(\d{2})(?=\d)/g, '$1 ')}`.trim();
 }
 
 /* minuscules, sans accents, espaces superflus ignorés */
@@ -264,7 +278,7 @@ function Telephone({ item, onCopier, taille = 'compact' }) {
         className={`inline-flex ${haut} items-center gap-1.5 rounded-md px-1.5 text-sm font-semibold text-jr-lien transition-colors hover:bg-jr-eau-pale motion-reduce:transition-none ${FOCUS}`}
       >
         <Phone size={15} aria-hidden="true" />
-        {item.telephone}
+        {formatPhoneDisplay(item.telephone)}
       </a>
 
       <button
@@ -615,6 +629,11 @@ function Contenu() {
 
     return () => controleur.current?.abort();
   }, [charger]);
+
+  useEffect(
+    () => ecouterChangementAbonnes(() => charger()),
+    [charger]
+  );
 
   /* ---------- Raccourci « / » : placer le curseur dans la recherche ---------- */
 

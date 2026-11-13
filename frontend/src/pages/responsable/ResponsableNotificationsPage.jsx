@@ -10,6 +10,8 @@ import {
   Trash2,
   Bell,
   CheckCheck,
+  ClipboardList,
+  ExternalLink,
   RefreshCw,
 } from 'lucide-react';
 
@@ -18,6 +20,7 @@ import axiosClient from "../../api/axiosClient";
 import ResponsableLayout from "../../components/admin/responsable/ResponsableLayout";
 import NotificationConfirmDialog from "../../components/notifications/NotificationConfirmDialog.jsx";
 import SuiviConsommationIndication from "../../components/notifications/SuiviConsommationIndication.jsx";
+import { ecouterChangementAbonnes } from '../../hooks/abonnesSync.js';
 
 function formatDateTime(value) {
   if (!value) return '—';
@@ -80,6 +83,11 @@ function decisionMessageClass(decision) {
 
 function getNotificationTone(type, unread) {
   const value = String(type || '').trim().toUpperCase();
+  if (value === 'MISSION_CONTROLE') {
+    return unread
+      ? { card: 'border-indigo-200 bg-indigo-50/50', icon: 'bg-indigo-100 text-indigo-700' }
+      : { card: 'border-indigo-100 bg-white', icon: 'bg-indigo-50 text-indigo-600' };
+  }
   if (value === 'INFO_CONSOMMATION_NORMALE') {
     return unread
       ? { card: 'border-emerald-200 bg-emerald-50/50', icon: 'bg-emerald-100 text-emerald-700' }
@@ -162,6 +170,8 @@ export default function ResponsableNotificationsPage() {
     loadNotifications();
   }, []);
 
+  useEffect(() => ecouterChangementAbonnes(() => loadNotifications(true)), []);
+
   const unread = useMemo(
     () =>
       notifications.filter(
@@ -184,6 +194,15 @@ export default function ResponsableNotificationsPage() {
     } finally {
       setProcessing(false);
     }
+  }
+
+  function ouvrirMission(notification) {
+    const missionId = Number(notification?.mission_id);
+    if (!Number.isInteger(missionId) || missionId <= 0) return;
+    const mois = String(notification?.mission_mois || '').slice(0, 7);
+    navigate(
+      `/dashboard/responsable/controles?mission=${missionId}${/^\d{4}-\d{2}$/.test(mois) ? `&mois=${mois}` : ''}`
+    );
   }
 
   function demanderActionNotification(notification, action) {
@@ -299,7 +318,7 @@ export default function ResponsableNotificationsPage() {
               Aucune notification
             </h3>
             <p className="mt-2 text-sm text-slate-500">
-              Les prochains suivis de consommation et les alertes apparaîtront ici automatiquement.
+              Les prochains suivis de consommation, les retours de missions de contrôle et les alertes apparaîtront ici automatiquement.
             </p>
           </div>
         ) : (
@@ -317,7 +336,13 @@ export default function ResponsableNotificationsPage() {
                 >
                   <div className="flex gap-4">
                     <div className={`rounded-2xl p-3 ${notificationTone.icon}`}>
-                      {notification.type === 'INFO_CONSOMMATION_NORMALE' ? <Bell size={22} /> : <AlertTriangle size={22} />}
+                      {String(notification.type || '').toUpperCase() === 'MISSION_CONTROLE' ? (
+                        <ClipboardList size={22} />
+                      ) : notification.type === 'INFO_CONSOMMATION_NORMALE' ? (
+                        <Bell size={22} />
+                      ) : (
+                        <AlertTriangle size={22} />
+                      )}
                     </div>
 
                     <div className="min-w-0 flex-1">
@@ -353,7 +378,7 @@ export default function ResponsableNotificationsPage() {
                         </div>
                       </div>
 
-                      <p className="mt-4 text-sm leading-6 text-slate-700">
+                      <p className="mt-4 whitespace-pre-line break-words text-sm leading-6 text-slate-700">
                         {notification.message || 'Notification de supervision.'}
                       </p>
 
@@ -377,6 +402,15 @@ export default function ResponsableNotificationsPage() {
                       )}
 
                       <div className="mt-4 flex flex-wrap items-center gap-2">
+                        {notification.mission_id && (
+                          <button
+                            type="button"
+                            onClick={() => ouvrirMission(notification)}
+                            className="inline-flex items-center gap-2 rounded-xl border border-jr-eau-bordure bg-jr-eau-pale px-3 py-2 text-sm font-semibold text-jr-eau-fonce transition hover:brightness-95 motion-reduce:transition-none"
+                          >
+                            <ExternalLink size={16} /> Ouvrir la mission
+                          </button>
+                        )}
                         {unreadItem && (
                           <button type="button" onClick={() => markAsRead(notification.id)} disabled={processing || actionBusy} className="inline-flex items-center gap-2 rounded-xl bg-jr-eau px-3 py-2 text-sm font-semibold text-white transition hover:bg-jr-eau-fonce disabled:opacity-50 motion-reduce:transition-none">
                             <CheckCheck size={16} /> Marquer comme lue

@@ -1,7 +1,11 @@
 import axios from 'axios';
 
 const axiosClient = axios.create({
-  baseURL: 'http://localhost:5000/api',
+  // In development, Vite proxies /api to the backend. A relative URL also
+  // keeps the API on the same origin when the frontend is opened via
+  // localhost, 127.0.0.1, or another development hostname.
+  // Set VITE_API_URL when the frontend and API are hosted separately.
+  baseURL: import.meta.env.VITE_API_URL || '/api',
   headers: {
     'Content-Type': 'application/json',
   },

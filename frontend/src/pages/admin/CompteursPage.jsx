@@ -12,10 +12,12 @@ import {
 } from 'lucide-react';
 
 import axiosClient from '../../api/axiosClient.js';
+import { ecouterChangementAbonnes } from '../../hooks/abonnesSync.js';
 
 import Sidebar from '../../components/admin/Sidebar.jsx';
 import Header from '../../components/admin/Header.jsx';
 import AdminShell from '../../components/admin/AdminShell.jsx';
+import CreationTransition, { useCreationTransition } from '../../components/ui/CreationTransition.jsx';
 
 import CompteursStats from '../../components/admin/compteurs/CompteursStats.jsx';
 import CompteursFiltres from '../../components/admin/compteurs/CompteursFiltres.jsx';
@@ -39,6 +41,8 @@ const INTERVALLE_ACTUALISATION = 60000;
 
 function CompteursPage() {
   const navigate = useNavigate();
+
+  const { transitionActive, jouerTransition } = useCreationTransition();
   const [searchParams, setSearchParams] = useSearchParams();
 
   /* ======================================================
@@ -249,7 +253,11 @@ function CompteursPage() {
 
       const response = await axiosClient.get('/abonnes');
 
-      setAbonnes(response.data.abonnes || []);
+      setAbonnes(
+        (response.data.abonnes || []).filter(
+          (abonne) => String(abonne.statut || '').trim().toLowerCase() === 'actif'
+        )
+      );
     } catch (err) {
       console.error('Erreur chargement abonnés :', err);
 
@@ -267,6 +275,15 @@ function CompteursPage() {
       chargerCompteurs();
       chargerAbonnes();
     }
+  }, [currentUser, chargerCompteurs, chargerAbonnes]);
+
+  useEffect(() => {
+    if (!currentUser) return undefined;
+
+    return ecouterChangementAbonnes(() => {
+      chargerCompteurs({ silencieux: true });
+      chargerAbonnes();
+    });
   }, [currentUser, chargerCompteurs, chargerAbonnes]);
 
   /* ======================================================
@@ -417,6 +434,9 @@ function CompteursPage() {
       const response = compteurEnEdition
         ? await axiosClient.put(`/compteurs/${compteurEnEdition.id}`, data)
         : await axiosClient.post('/compteurs', data);
+
+      // Bref écran de chargement JIRAMA après une création (pas après une édition).
+      if (!compteurEnEdition) jouerTransition();
 
       const idCible = compteurEnEdition?.id ?? response.data.compteur?.id ?? null;
 
@@ -779,6 +799,7 @@ function CompteursPage() {
           onAnnuler={() => setConfirmation(null)}
         />
       )}
+      <CreationTransition active={transitionActive} />
     </AdminShell>
   );
 }

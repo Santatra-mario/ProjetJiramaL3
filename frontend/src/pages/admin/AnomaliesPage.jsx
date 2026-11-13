@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 
 import axiosClient from '../../api/axiosClient.js';
+import { ecouterChangementAbonnes } from '../../hooks/abonnesSync.js';
 
 import Sidebar from '../../components/admin/Sidebar.jsx';
 
@@ -956,6 +957,13 @@ function AnomaliesPage() {
     loadAnomalies,
     loadStats,
   ]);
+
+  useEffect(() => ecouterChangementAbonnes(() => {
+    if (!user) return;
+    Promise.all([loadAnomalies(), loadStats()]).catch((requestError) => {
+      setError(requestError.message || 'Erreur lors du chargement du module.');
+    });
+  }), [user, loadAnomalies, loadStats]);
 
 
   /* =======================================================

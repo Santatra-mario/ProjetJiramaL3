@@ -40,6 +40,7 @@ import axiosClient from '../../api/axiosClient.js';
 import AdminShell from '../../components/admin/AdminShell.jsx';
 import Sidebar from '../../components/admin/Sidebar.jsx';
 import Header from '../../components/admin/Header.jsx';
+import ResponsableLayout from '../../components/admin/responsable/ResponsableLayout.jsx';
 
 /* =========================================================
    CONSTANTES
@@ -123,9 +124,21 @@ function formatDate(valeur) {
   // les dates AAAA-MM-JJ sont lues en heure locale (pas de décalage de fuseau)
   const date = depuisTexte(String(valeur).slice(0, 10)) || new Date(valeur);
 
-  return Number.isNaN(date.getTime())
-    ? '—'
-    : date.toLocaleDateString('fr-FR');
+  if (Number.isNaN(date.getTime())) {
+    return '—';
+  }
+
+  /* Format français long attendu : « 08 Novembre 2026 ».
+     La date AAAA-MM-JJ est lue en heure locale, donc aucun décalage de jour. */
+  return date
+    .toLocaleDateString('fr-FR', {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+    })
+    .replace(/(^|[\s-])(\p{L})/gu, (correspondance, separateur, lettre) => (
+      `${separateur}${lettre.toUpperCase()}`
+    ));
 }
 
 function formatDateCourte(valeur) {
@@ -727,7 +740,16 @@ function ComparaisonPage() {
   const reduireMouvements = useReducedMotion();
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [user, setUser] = useState(null);
+  /* Le rôle est lu immédiatement dans la session : la page n'affiche jamais
+     le cadre Administrateur à un Responsable, même le temps d'un rendu. */
+  const [user, setUser] = useState(() => {
+    try {
+      const stocke = localStorage.getItem('user');
+      return stocke ? JSON.parse(stocke) : null;
+    } catch {
+      return null;
+    }
+  });
 
   const [compteurs, setCompteurs] = useState([]);
   const [loadingCompteurs, setLoadingCompteurs] = useState(true);
@@ -1214,32 +1236,17 @@ function ComparaisonPage() {
 
   /* ---------- Rendu ---------- */
 
-  return (
-    <AdminShell intensite="calme">
-      <Sidebar
-        isOpen={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-        activePath="/dashboard/admin/comparaison"
-        onNavigate={(path) => navigate(path)}
-        onLogout={deconnecter}
-        user={user}
-      />
+  const estResponsable = String(user?.role || '').trim().toUpperCase() === 'RESPONSABLE';
+  const racine = estResponsable ? '/dashboard/responsable' : '/dashboard/admin';
 
-      <div className="lg:pl-72">
-        <Header
-          onOpenSidebar={() => setSidebarOpen(true)}
-          onProfile={() => navigate('/dashboard/admin')}
-          user={user}
-        />
-
-        <main className="px-4 py-6 sm:px-6 lg:px-8">
-          <div className="mx-auto max-w-6xl space-y-6">
+  const contenuPage = (
+    <div className="mx-auto max-w-6xl space-y-6">
             {/* ---------- En-tête ---------- */}
             <div className="jr-entree flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
               <div className="min-w-0">
                 <button
                   type="button"
-                  onClick={() => navigate('/dashboard/admin')}
+                  onClick={() => navigate(racine)}
                   className="mb-3 inline-flex items-center gap-2 rounded-md text-sm font-medium text-jr-lien transition hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-elec motion-reduce:transition-none"
                 >
                   <ArrowLeft size={16} aria-hidden="true" />
@@ -2005,8 +2012,38 @@ function ComparaisonPage() {
                 </div>
               </section>
             )}
-          </div>
-        </main>
+    </div>
+  );
+
+  /* Le Responsable dispose de la même logique de comparaison que
+     l'Administrateur, dans son propre cadre de navigation. */
+  if (estResponsable) {
+    return (
+      <ResponsableLayout title="Comparaison des consommations">
+        {contenuPage}
+      </ResponsableLayout>
+    );
+  }
+
+  return (
+    <AdminShell intensite="calme">
+      <Sidebar
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        activePath="/dashboard/admin/comparaison"
+        onNavigate={(path) => navigate(path)}
+        onLogout={deconnecter}
+        user={user}
+      />
+
+      <div className="lg:pl-72">
+        <Header
+          onOpenSidebar={() => setSidebarOpen(true)}
+          onProfile={() => navigate(racine)}
+          user={user}
+        />
+
+        <main className="px-4 py-6 sm:px-6 lg:px-8">{contenuPage}</main>
       </div>
     </AdminShell>
   );

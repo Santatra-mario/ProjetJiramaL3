@@ -4,6 +4,7 @@ import { CalendarDays, Droplets, Search, TriangleAlert, X, Zap } from 'lucide-re
 
 import axiosClient from '../../api/axiosClient';
 import AgentLayout from '../../components/admin/agent/AgentLayout';
+import { ecouterChangementAbonnes } from '../../hooks/abonnesSync.js';
 
 const CARD = 'rounded-2xl border border-slate-200 bg-white shadow-sm';
 const FIELD =
@@ -207,6 +208,7 @@ function AgentAnomaliesPage() {
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
+  const [abonnesRevision, setAbonnesRevision] = useState(0);
 
   const firstRun = useRef(true);
   const requestId = useRef(0);
@@ -260,7 +262,11 @@ function AgentAnomaliesPage() {
     firstRun.current = false;
     const timer = setTimeout(loadAnomalies, delay);
     return () => clearTimeout(timer);
-  }, [search, type, niveau, statut]);
+  }, [search, type, niveau, statut, abonnesRevision]);
+
+  useEffect(() => ecouterChangementAbonnes(() => {
+    setAbonnesRevision((revision) => revision + 1);
+  }), []);
 
   const totalNouvelles = useMemo(
     () => anomalies.filter((item) => normalize(item.statut) === 'NOUVELLE').length,

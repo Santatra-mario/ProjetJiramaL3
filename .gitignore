@@ -1,0 +1,11 @@
+﻿# Dependencies
+node_modules/
+**/node_modules/
+# Build files
+dist/
+**/dist/
+# Vite cache
+.vite/
+**/.vite/
+# PowerShell cache
+Microsoft/Windows/PowerShell/ModuleAnalysisCache

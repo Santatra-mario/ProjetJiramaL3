@@ -844,7 +844,34 @@ async function getAllNotifications(
 
           ab.numero_abonne,
           ab.nom AS nom_abonne,
-          ab.prenom AS prenom_abonne
+          ab.prenom AS prenom_abonne,
+
+          mission_notification.id AS mission_id,
+          campagne_mission.mois::text AS mission_mois,
+          CASE
+            WHEN mission_notification.id IS NULL THEN NULL
+            ELSE ((mission_notification.date_prevue - campagne_mission.date_debut) % 3) + 1
+          END AS mission_jour,
+          campagne_mission.date_debut::text AS mission_campagne_debut,
+          campagne_mission.date_fin::text AS mission_campagne_fin,
+          mission_notification.date_prevue::text AS mission_date_prevue,
+          COALESCE(mission_notification.date_visite_reelle, r_mission.date_releve)::text AS mission_date_reelle,
+          mission_notification.statut AS mission_statut,
+          mission_notification.resultat_visite AS mission_resultat_visite,
+          mission_notification.motif_reprogrammation AS mission_motif,
+          NULLIF(TRIM(CONCAT_WS(' ', mission_agent.prenom, mission_agent.nom)), '') AS mission_agent,
+          mission_agent.identifiant AS mission_agent_identifiant,
+          ab_mission.numero_abonne AS mission_numero_abonne,
+          ab_mission.nom AS mission_nom_abonne,
+          ab_mission.prenom AS mission_prenom_abonne,
+          ab_mission.quartier AS mission_quartier,
+          c_mission.numero_compteur AS mission_numero_compteur,
+          c_mission.type AS mission_type_compteur,
+          r_mission.type_releve AS mission_type_releve,
+          r_mission.ancien_index AS mission_ancien_index,
+          r_mission.nouvel_index AS mission_nouvel_index,
+          r_mission.consommation AS mission_consommation,
+          mission_precedent.nouvel_index AS mission_index_precedent
 
         FROM notifications n
 
@@ -859,6 +886,42 @@ async function getAllNotifications(
 
         LEFT JOIN abonnes ab
           ON ab.id = c.abonne_id
+
+        LEFT JOIN missions_controle mission_notification
+          ON n.type = 'MISSION_CONTROLE'
+          AND mission_notification.id = NULLIF(
+            SUBSTRING(n.evenement_cle FROM '^mission:v2:([0-9]+):'), ''
+          )::int
+
+        LEFT JOIN campagnes_controle campagne_mission
+          ON campagne_mission.id = mission_notification.campagne_id
+
+        LEFT JOIN users mission_agent
+          ON mission_agent.id = mission_notification.agent_id
+
+        LEFT JOIN abonnes ab_mission
+          ON ab_mission.id = mission_notification.abonne_id
+
+        LEFT JOIN compteurs c_mission
+          ON c_mission.id = mission_notification.compteur_id
+
+        LEFT JOIN releves r_mission
+          ON r_mission.id = mission_notification.releve_id
+
+        LEFT JOIN LATERAL (
+          SELECT rp.nouvel_index
+          FROM releves rp
+          WHERE rp.compteur_id = mission_notification.compteur_id
+            AND rp.id IS DISTINCT FROM mission_notification.releve_id
+            AND (
+              r_mission.id IS NULL
+              OR (rp.date_releve, rp.id) < (r_mission.date_releve, r_mission.id)
+            )
+            AND rp.nouvel_index IS NOT NULL
+            AND rp.nouvel_index >= 0
+          ORDER BY rp.date_releve DESC, rp.id DESC
+          LIMIT 1
+        ) mission_precedent ON TRUE
 
         WHERE LOWER(TRIM(n.destinataire))
               = LOWER(TRIM($1))
@@ -1048,7 +1111,34 @@ async function getNotificationById(
 
           ab.numero_abonne,
           ab.nom AS nom_abonne,
-          ab.prenom AS prenom_abonne
+          ab.prenom AS prenom_abonne,
+
+          mission_notification.id AS mission_id,
+          campagne_mission.mois::text AS mission_mois,
+          CASE
+            WHEN mission_notification.id IS NULL THEN NULL
+            ELSE ((mission_notification.date_prevue - campagne_mission.date_debut) % 3) + 1
+          END AS mission_jour,
+          campagne_mission.date_debut::text AS mission_campagne_debut,
+          campagne_mission.date_fin::text AS mission_campagne_fin,
+          mission_notification.date_prevue::text AS mission_date_prevue,
+          COALESCE(mission_notification.date_visite_reelle, r_mission.date_releve)::text AS mission_date_reelle,
+          mission_notification.statut AS mission_statut,
+          mission_notification.resultat_visite AS mission_resultat_visite,
+          mission_notification.motif_reprogrammation AS mission_motif,
+          NULLIF(TRIM(CONCAT_WS(' ', mission_agent.prenom, mission_agent.nom)), '') AS mission_agent,
+          mission_agent.identifiant AS mission_agent_identifiant,
+          ab_mission.numero_abonne AS mission_numero_abonne,
+          ab_mission.nom AS mission_nom_abonne,
+          ab_mission.prenom AS mission_prenom_abonne,
+          ab_mission.quartier AS mission_quartier,
+          c_mission.numero_compteur AS mission_numero_compteur,
+          c_mission.type AS mission_type_compteur,
+          r_mission.type_releve AS mission_type_releve,
+          r_mission.ancien_index AS mission_ancien_index,
+          r_mission.nouvel_index AS mission_nouvel_index,
+          r_mission.consommation AS mission_consommation,
+          mission_precedent.nouvel_index AS mission_index_precedent
 
         FROM notifications n
 
@@ -1063,6 +1153,42 @@ async function getNotificationById(
 
         LEFT JOIN abonnes ab
           ON ab.id = c.abonne_id
+
+        LEFT JOIN missions_controle mission_notification
+          ON n.type = 'MISSION_CONTROLE'
+          AND mission_notification.id = NULLIF(
+            SUBSTRING(n.evenement_cle FROM '^mission:v2:([0-9]+):'), ''
+          )::int
+
+        LEFT JOIN campagnes_controle campagne_mission
+          ON campagne_mission.id = mission_notification.campagne_id
+
+        LEFT JOIN users mission_agent
+          ON mission_agent.id = mission_notification.agent_id
+
+        LEFT JOIN abonnes ab_mission
+          ON ab_mission.id = mission_notification.abonne_id
+
+        LEFT JOIN compteurs c_mission
+          ON c_mission.id = mission_notification.compteur_id
+
+        LEFT JOIN releves r_mission
+          ON r_mission.id = mission_notification.releve_id
+
+        LEFT JOIN LATERAL (
+          SELECT rp.nouvel_index
+          FROM releves rp
+          WHERE rp.compteur_id = mission_notification.compteur_id
+            AND rp.id IS DISTINCT FROM mission_notification.releve_id
+            AND (
+              r_mission.id IS NULL
+              OR (rp.date_releve, rp.id) < (r_mission.date_releve, r_mission.id)
+            )
+            AND rp.nouvel_index IS NOT NULL
+            AND rp.nouvel_index >= 0
+          ORDER BY rp.date_releve DESC, rp.id DESC
+          LIMIT 1
+        ) mission_precedent ON TRUE
 
         WHERE n.id = $1
           AND LOWER(TRIM(n.destinataire))

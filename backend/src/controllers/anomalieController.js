@@ -251,7 +251,8 @@ async function detectAnomalies() {
     FROM historique h
     INNER JOIN compteurs c ON c.id = h.compteur_id
     INNER JOIN abonnes a ON a.id = c.abonne_id
-    WHERE h.nombre_references >= $1
+    WHERE LOWER(TRIM(a.statut)) <> 'supprime'
+      AND h.nombre_references >= $1
       AND h.duree_jours > 0
       AND h.consommation IS NOT NULL
       AND h.consommation >= 0
@@ -581,7 +582,9 @@ async function getAnomalies(req, res) {
       limite = 500,
     } = req.query;
 
-    const conditions = [];
+    const conditions = [
+      "LOWER(TRIM(a.statut)) <> 'supprime'",
+    ];
     const params = [];
 
     /*

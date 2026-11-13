@@ -41,6 +41,12 @@ const {
   '../controllers/releveController'
 );
 
+const {
+  getMissionsAgent,
+  getMissionAgent,
+  modifierStatutMissionAgent,
+} = require('../controllers/controleController');
+
 
 const {
 
@@ -67,6 +73,31 @@ router.get(
   ),
 
   getAgentDashboard
+);
+
+/* =========================================================
+   MISSIONS DE CONTRÔLE ATTRIBUÉES
+========================================================= */
+
+router.get(
+  '/missions',
+  verifyToken,
+  checkRole('AGENT'),
+  getMissionsAgent
+);
+
+router.get(
+  '/missions/:id',
+  verifyToken,
+  checkRole('AGENT'),
+  getMissionAgent
+);
+
+router.patch(
+  '/missions/:id/statut',
+  verifyToken,
+  checkRole('AGENT'),
+  modifierStatutMissionAgent
 );
 
 

@@ -39,6 +39,7 @@ import {
 } from '../../components/admin/dashboard/analysisUtils.js';
 
 import axiosClient from '../../api/axiosClient.js';
+import { ecouterChangementAbonnes } from '../../hooks/abonnesSync.js';
 
 /* =========================================================
    UTILITAIRES & CONSTANTES
@@ -383,6 +384,11 @@ function AdminDashboard() {
     loadLineChart();
   }, [user, loadDashboard, loadNotificationCount, loadAnalysis, loadLineChart]);
 
+  useEffect(() => {
+    if (!user) return undefined;
+    return ecouterChangementAbonnes(() => loadDashboard(true));
+  }, [user, loadDashboard]);
+
   const updateFilter = (key, value) =>
     setFilters((previous) => ({ ...previous, [key]: value }));
 
@@ -403,18 +409,8 @@ function AdminDashboard() {
     return <DashboardSkeleton />;
   }
 
-  const stats = dashboard?.stats || {
-    abonnes: 0,
-    abonnesActifs: 0,
-    compteurs: 0,
-    compteursActifs: 0,
-    releves: 0,
-    relevesMois: 0,
-    anomalies: 0,
-    anomaliesNouvelles: 0,
-    consommationEauMois: 0,
-    consommationElectriciteMois: 0,
-  };
+  const statsDisponibles = Boolean(dashboard?.stats && typeof dashboard.stats === 'object');
+  const stats = statsDisponibles ? dashboard.stats : {};
 
   const derniersReleves = dashboard?.derniersReleves || [];
   const anomaliesRecentes = dashboard?.anomaliesRecentes || [];
@@ -547,8 +543,8 @@ function AdminDashboard() {
           >
             <StatCard
               title="Abonnés"
-              value={formatNumber(stats.abonnes)}
-              subtitle={`${formatNumber(stats.abonnesActifs)} actifs`}
+              value={statsDisponibles ? formatNumber(stats.abonnes) : '—'}
+              subtitle={statsDisponibles ? `${formatNumber(stats.abonnesActifs)} actifs · hors supprimés` : 'Statistiques indisponibles'}
               icon={UserRound}
               iconBg="bg-sky-50"
               iconColor="text-sky-600"
@@ -556,9 +552,9 @@ function AdminDashboard() {
             />
 
             <StatCard
-              title="Compteurs Registrés"
-              value={formatNumber(stats.compteurs)}
-              subtitle={`${formatNumber(stats.compteursActifs)} en service`}
+              title="Compteurs visibles"
+              value={statsDisponibles ? formatNumber(stats.compteurs) : '—'}
+              subtitle={statsDisponibles ? `${formatNumber(stats.compteursActifs)} en service` : 'Statistiques indisponibles'}
               icon={Gauge}
               iconBg="bg-amber-50"
               iconColor="text-amber-600"
@@ -567,8 +563,8 @@ function AdminDashboard() {
 
             <StatCard
               title="Relevés Global"
-              value={formatNumber(stats.releves)}
-              subtitle={`+${formatNumber(stats.relevesMois)} ce mois`}
+              value={statsDisponibles ? formatNumber(stats.releves) : '—'}
+              subtitle={statsDisponibles ? `+${formatNumber(stats.relevesMois)} ce mois` : 'Statistiques indisponibles'}
               icon={ClipboardList}
               iconBg="bg-emerald-50"
               iconColor="text-emerald-600"
@@ -577,8 +573,8 @@ function AdminDashboard() {
 
             <StatCard
               title="Anomalies Détectées"
-              value={formatNumber(stats.anomalies)}
-              subtitle={`${formatNumber(stats.anomaliesNouvelles)} non traitées`}
+              value={statsDisponibles ? formatNumber(stats.anomalies) : '—'}
+              subtitle={statsDisponibles ? `${formatNumber(stats.anomaliesNouvelles)} non traitées` : 'Statistiques indisponibles'}
               icon={TriangleAlert}
               iconBg="bg-red-50"
               iconColor="text-red-600"
@@ -607,7 +603,7 @@ function AdminDashboard() {
                     </p>
                   </div>
                   <p className="mt-3 text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
-                    {formatNumber(stats.consommationEauMois)}
+                    {statsDisponibles ? formatNumber(stats.consommationEauMois) : '—'}
                     <span className="ml-2 text-base font-semibold text-sky-600">
                       m³
                     </span>
@@ -638,7 +634,7 @@ function AdminDashboard() {
                     </p>
                   </div>
                   <p className="mt-3 text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
-                    {formatNumber(stats.consommationElectriciteMois)}
+                    {statsDisponibles ? formatNumber(stats.consommationElectriciteMois) : '—'}
                     <span className="ml-2 text-base font-semibold text-amber-600">
                       kWh
                     </span>
@@ -896,7 +892,6 @@ function AdminDashboard() {
           >
             <RecentReadings
               readings={derniersReleves}
-              onViewAll={() => navigate('/dashboard/admin/releves')}
             />
           </motion.div>
 

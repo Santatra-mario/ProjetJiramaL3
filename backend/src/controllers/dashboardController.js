@@ -43,6 +43,7 @@ async function getDashboard(req, res) {
           (
             SELECT COUNT(*)
             FROM abonnes
+            WHERE LOWER(TRIM(statut)) <> 'supprime'
           ) AS abonnes,
 
           (
@@ -57,14 +58,20 @@ async function getDashboard(req, res) {
           --------------------------------------------- */
 
           (
-            SELECT COUNT(*)
-            FROM compteurs
+            SELECT COUNT(DISTINCT c.id)
+            FROM compteurs c
+            INNER JOIN abonnes a
+              ON a.id = c.abonne_id
+             AND LOWER(TRIM(a.statut)) = 'actif'
           ) AS compteurs,
 
           (
-            SELECT COUNT(*)
-            FROM compteurs
-            WHERE UPPER(TRIM(statut)) = 'ACTIF'
+            SELECT COUNT(DISTINCT c.id)
+            FROM compteurs c
+            INNER JOIN abonnes a
+              ON a.id = c.abonne_id
+             AND LOWER(TRIM(a.statut)) = 'actif'
+            WHERE UPPER(TRIM(c.statut)) = 'ACTIF'
           ) AS compteurs_actifs,
 
 
@@ -74,19 +81,25 @@ async function getDashboard(req, res) {
 
           (
             SELECT COUNT(*)
-            FROM releves
+            FROM releves r
+            INNER JOIN compteurs c ON c.id = r.compteur_id
+            INNER JOIN abonnes a ON a.id = c.abonne_id
+            WHERE LOWER(TRIM(a.statut)) <> 'supprime'
           ) AS releves,
 
           (
             SELECT COUNT(*)
-            FROM releves
-            WHERE date_releve >=
+            FROM releves r
+            INNER JOIN compteurs c ON c.id = r.compteur_id
+            INNER JOIN abonnes a ON a.id = c.abonne_id
+            WHERE LOWER(TRIM(a.statut)) <> 'supprime'
+              AND r.date_releve >=
               DATE_TRUNC(
                 'month',
                 CURRENT_DATE
               )
 
-            AND date_releve <
+              AND r.date_releve <
               DATE_TRUNC(
                 'month',
                 CURRENT_DATE
@@ -110,6 +123,10 @@ async function getDashboard(req, res) {
 
             INNER JOIN compteurs c
               ON c.id = r.compteur_id
+
+            INNER JOIN abonnes a
+              ON a.id = c.abonne_id
+             AND LOWER(TRIM(a.statut)) <> 'supprime'
 
             WHERE
               r.date_releve >=
@@ -146,6 +163,10 @@ async function getDashboard(req, res) {
 
             INNER JOIN compteurs c
               ON c.id = r.compteur_id
+
+            INNER JOIN abonnes a
+              ON a.id = c.abonne_id
+             AND LOWER(TRIM(a.statut)) <> 'supprime'
 
             WHERE
               r.date_releve >=
@@ -209,7 +230,7 @@ async function getDashboard(req, res) {
               SUM(
                 CASE
 
-                  WHEN UPPER(
+                  WHEN LOWER(TRIM(a.statut)) <> 'supprime' AND UPPER(
                     TRIM(c.type)
                   ) = 'EAU'
 
@@ -236,7 +257,7 @@ async function getDashboard(req, res) {
               SUM(
                 CASE
 
-                  WHEN UPPER(
+                  WHEN LOWER(TRIM(a.statut)) <> 'supprime' AND UPPER(
                     TRIM(c.type)
                   ) = 'ELECTRICITE'
 
@@ -271,6 +292,10 @@ async function getDashboard(req, res) {
 
           ON c.id =
             r.compteur_id
+
+        LEFT JOIN abonnes a
+
+          ON a.id = c.abonne_id
 
 
         GROUP BY
@@ -446,6 +471,8 @@ async function getDashboard(req, res) {
 
           ON a.id =
             c.abonne_id
+
+        WHERE LOWER(TRIM(a.statut)) <> 'supprime'
 
 
         ORDER BY
@@ -641,6 +668,11 @@ async function getDashboard(req, res) {
 
           ON c.id =
             r.compteur_id
+
+        INNER JOIN abonnes a
+
+          ON a.id = c.abonne_id
+         AND LOWER(TRIM(a.statut)) <> 'supprime'
 
 
         WHERE

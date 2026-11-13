@@ -19,6 +19,7 @@ import {
   LayoutList,
   MapPin,
   Phone,
+  Plus,
   RefreshCw,
   Search,
   TriangleAlert,
@@ -29,6 +30,8 @@ import {
 
 import axiosClient from '../../api/axiosClient';
 import AgentLayout from '../../components/admin/agent/AgentLayout';
+import CompteurModal from '../../components/admin/compteurs/CompteurModal.jsx';
+import { ecouterChangementAbonnes } from '../../hooks/abonnesSync.js';
 import { useToast } from '../../components/ui/ToastProvider.jsx';
 import {
   estAnnulation,
@@ -51,6 +54,19 @@ function formatDate(value) {
   return Number.isNaN(date.getTime())
     ? '—'
     : date.toLocaleDateString('fr-FR');
+}
+
+function formatDateInstallation(value) {
+  if (!value) return '—';
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value).slice(0, 10));
+  if (!match) return '—';
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const check = new Date(Date.UTC(year, month - 1, day));
+  if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day) return '—';
+  const mois = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
+  return `${day} ${mois[month - 1]} ${year}`;
 }
 
 /*
@@ -339,7 +355,7 @@ function PanneauDetail({ item, onClose, onReleve }) {
     ['Type', estEau(item) ? 'Eau (m³)' : 'Électricité (kWh)'],
     ['Abonné', nomAbonne(item)],
     ['N° d’abonné', item.numero_abonne || '—'],
-    ['Installation', formatDate(item.date_installation)],
+    ['Installation', formatDateInstallation(item.date_installation)],
   ];
 
   return (
@@ -507,6 +523,14 @@ function Contenu() {
   const [filtreStatut, setFiltreStatut] = useState('');
   const [vue, setVue] = useState(lireVue);
   const [selectionId, setSelectionId] = useState(null);
+  const [abonnes, setAbonnes] = useState([]);
+  const [modalOuvert, setModalOuvert] = useState(false);
+  const [compteurEnEdition, setCompteurEnEdition] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [erreurModal, setErreurModal] = useState('');
+  const [cleErreur, setCleErreur] = useState(0);
+  const [loadingAbonnes, setLoadingAbonnes] = useState(true);
+  const [erreurAbonnes, setErreurAbonnes] = useState('');
 
   const controleur = useRef(null);
   const champRecherche = useRef(null);
@@ -597,6 +621,90 @@ function Contenu() {
     return () => controleur.current?.abort();
   }, [charger]);
 
+  useEffect(
+    () => ecouterChangementAbonnes(() => charger()),
+    [charger]
+  );
+
+  const chargerAbonnes = useCallback(async () => {
+    try {
+      setLoadingAbonnes(true);
+      setErreurAbonnes('');
+
+      const response = await axiosClient.get('/abonnes');
+
+      setAbonnes(
+        (response.data.abonnes || []).filter(
+          (abonne) => String(abonne.statut || '').trim().toLowerCase() === 'actif'
+        )
+      );
+    } catch (requestError) {
+      console.error('Erreur chargement abonnés Agent :', requestError);
+
+      setErreurAbonnes(
+        requestError.response?.data?.message ||
+          'Impossible de charger la liste des abonnés.'
+      );
+    } finally {
+      setLoadingAbonnes(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    chargerAbonnes();
+  }, [chargerAbonnes]);
+
+  const ouvrirCreation = useCallback(() => {
+    setCompteurEnEdition(null);
+    setErreurModal('');
+    setModalOuvert(true);
+  }, []);
+
+  const fermerModal = useCallback(() => {
+    if (saving) return;
+
+    setModalOuvert(false);
+    setCompteurEnEdition(null);
+    setErreurModal('');
+  }, [saving]);
+
+  const enregistrer = useCallback(
+    async (data) => {
+      setErreurModal('');
+      setSaving(true);
+
+      try {
+        const response = await axiosClient.post('/compteurs', data);
+
+        notify({
+          cle: 'compteur-cree',
+          genre: 'succes',
+          titre: 'Compteur ajouté',
+          message: response.data?.message || 'Compteur créé avec succès.',
+        });
+
+        setModalOuvert(false);
+        setCompteurEnEdition(null);
+        await charger(true);
+      } catch (requestError) {
+        console.error('Erreur création compteur Agent :', requestError);
+
+        if (traiterErreurSession(requestError, notify, navigate)) {
+          return;
+        }
+
+        setErreurModal(
+          requestError.response?.data?.message ||
+            'Une erreur est survenue lors de la création du compteur.'
+        );
+        setCleErreur((precedent) => precedent + 1);
+      } finally {
+        setSaving(false);
+      }
+    },
+    [charger, navigate, notify]
+  );
+
   /* ---------- Raccourci « / » : placer le curseur dans la recherche ---------- */
 
   useEffect(() => {
@@ -682,6 +790,49 @@ function Contenu() {
     });
 
     return resultat;
+  }, [compteurs]);
+
+  const compteursParAbonne = useMemo(() => {
+    const map = new Map();
+
+    compteurs.forEach((item) => {
+      const cle = String(item?.abonne_id ?? `${item?.abonne_nom || ''}-${item?.abonne_prenom || ''}`);
+      const existant = map.get(cle) || {
+        id: item?.abonne_id ?? cle,
+        nom: `${item?.abonne_prenom || ''} ${item?.abonne_nom || ''}`.trim() || 'Abonné',
+        reference: item?.numero_abonne || '—',
+        adresse: [item?.abonne_adresse, item?.abonne_quartier].filter(Boolean).join(' · ') || '—',
+        total: 0,
+        types: new Set(),
+        statuts: new Set(),
+      };
+
+      existant.total += 1;
+      if (item?.type) existant.types.add(String(item.type).trim().toUpperCase());
+      if (item?.statut) existant.statuts.add(String(item.statut).trim().toUpperCase());
+      map.set(cle, existant);
+    });
+
+    return [...map.values()].map((abonne) => {
+      const types = [...abonne.types].sort((a, b) => a.localeCompare(b, 'fr'));
+      const typesLibelles = types.map((type) =>
+        type === 'ELECTRICITE' ? 'ÉLECTRICITÉ' : type
+      );
+
+      return {
+        ...abonne,
+        types,
+        statuts: [...abonne.statuts].sort((a, b) => a.localeCompare(b, 'fr')),
+        label: (() => {
+          if (!typesLibelles.length) return 'Aucun compteur enregistré';
+          if (typesLibelles.length === 1) return `${abonne.total} compteur — ${typesLibelles[0]}`;
+          if (typesLibelles.includes('EAU') && typesLibelles.includes('ÉLECTRICITÉ')) {
+            return `${abonne.total} compteurs — EAU + ÉLECTRICITÉ`;
+          }
+          return `${abonne.total} compteurs — ${typesLibelles.join(' + ')}`;
+        })(),
+      };
+    });
   }, [compteurs]);
 
   const lignes = useMemo(() => {
@@ -826,24 +977,35 @@ function Contenu() {
               )}
             </div>
 
-            <button
-              type="button"
-              onClick={() => charger(true)}
-              disabled={loading || refreshing}
-              aria-busy={refreshing}
-              className={`inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md border border-jr-bordure bg-jr-surface px-4 text-sm font-semibold text-jr-lien transition-colors hover:bg-jr-eau-pale disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none ${FOCUS}`}
-            >
-              <RefreshCw
-                size={18}
-                aria-hidden="true"
-                className={
-                  refreshing
-                    ? 'animate-spin motion-reduce:animate-none'
-                    : ''
-                }
-              />
-              {refreshing ? 'Actualisation…' : 'Actualiser'}
-            </button>
+            <div className="flex items-center gap-2 sm:justify-end">
+              <button
+                type="button"
+                onClick={ouvrirCreation}
+                className={`inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md bg-jr-eau px-4 text-sm font-semibold text-white transition-colors hover:bg-jr-eau-fonce focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-focus motion-reduce:transition-none ${FOCUS}`}
+              >
+                <Plus size={18} aria-hidden="true" />
+                Ajouter un compteur
+              </button>
+
+              <button
+                type="button"
+                onClick={() => charger(true)}
+                disabled={loading || refreshing}
+                aria-busy={refreshing}
+                className={`inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md border border-jr-bordure bg-jr-surface px-4 text-sm font-semibold text-jr-lien transition-colors hover:bg-jr-eau-pale disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none ${FOCUS}`}
+              >
+                <RefreshCw
+                  size={18}
+                  aria-hidden="true"
+                  className={
+                    refreshing
+                      ? 'animate-spin motion-reduce:animate-none'
+                      : ''
+                  }
+                />
+                {refreshing ? 'Actualisation…' : 'Actualiser'}
+              </button>
+            </div>
           </div>
         </div>
       </section>
@@ -946,6 +1108,35 @@ function Contenu() {
           ))}
         </div>
       </section>
+
+      {compteursParAbonne.length > 0 && !loading && (
+        <section className="jr-entree jr-verre-fort rounded-lg border border-jr-bordure p-4 shadow-sm sm:p-5">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-semibold text-jr-texte">Abonnés avec compteurs</p>
+            <span className="rounded-full bg-jr-eau-pale px-2.5 py-1 text-xs font-bold text-jr-lien">
+              {compteursParAbonne.length} abonné{compteursParAbonne.length > 1 ? 's' : ''}
+            </span>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {compteursParAbonne.map((abonne) => (
+              <div key={abonne.id} className="rounded-lg border border-jr-bordure bg-jr-surface p-3.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-bold text-jr-texte">{abonne.nom}</p>
+                    <p className="text-xs text-jr-faible">{abonne.reference}</p>
+                  </div>
+                  <span className="rounded-full border border-jr-bordure bg-jr-champ px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-jr-doux">
+                    {abonne.label.includes('Aucun') ? 'SANS COMPTEUR' : 'ACTIF'}
+                  </span>
+                </div>
+                <p className="mt-3 text-sm text-jr-texte">{abonne.label}</p>
+                <p className="mt-1 text-xs text-jr-faible">{abonne.adresse}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* ---------- 3. Résultats ---------- */}
       <section
@@ -1118,7 +1309,7 @@ function Contenu() {
                         </td>
 
                         <td className="px-5 py-3 text-sm text-jr-doux">
-                          {formatDate(item.date_installation)}
+                          {formatDateInstallation(item.date_installation)}
                         </td>
 
                         <td className="px-5 py-3">
@@ -1246,6 +1437,23 @@ function Contenu() {
           item={selection}
           onClose={fermerDetail}
           onReleve={() => allerReleve(selection)}
+        />
+      )}
+
+      {modalOuvert && (
+        <CompteurModal
+          key={compteurEnEdition?.id ?? 'nouveau'}
+          compteur={compteurEnEdition}
+          compteurs={compteurs}
+          abonnes={abonnes}
+          chargementAbonnes={loadingAbonnes}
+          erreurAbonnes={erreurAbonnes}
+          onRelancerAbonnes={chargerAbonnes}
+          enregistrement={saving}
+          erreurServeur={erreurModal}
+          cleErreur={cleErreur}
+          onFermer={fermerModal}
+          onEnregistrer={enregistrer}
         />
       )}
     </div>

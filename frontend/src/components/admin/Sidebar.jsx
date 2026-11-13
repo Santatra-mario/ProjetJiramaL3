@@ -1,9 +1,9 @@
+import { useState } from 'react';
+
 import {
   LayoutDashboard,
   Users,
   UserRound,
-  Gauge,
-  ClipboardList,
   TriangleAlert,
   Bell,
   Settings,
@@ -13,6 +13,8 @@ import {
   GitCompare,
 } from 'lucide-react';
 
+import ConfirmationDeconnexion from '../ui/ConfirmationDeconnexion.jsx';
+
 function Sidebar({
   isOpen = false,
   onClose,
@@ -21,12 +23,12 @@ function Sidebar({
   onLogout,
   user,
 }) {
+  const [confirmationOuverte, setConfirmationOuverte] = useState(false);
+
   const menuItems = [
     { label: 'Tableau de bord', icon: LayoutDashboard, path: '/dashboard/admin' },
     { label: 'Utilisateurs', icon: Users, path: '/dashboard/admin/utilisateurs' },
     { label: 'Abonnés', icon: UserRound, path: '/dashboard/admin/abonnes' },
-    { label: 'Compteurs', icon: Gauge, path: '/dashboard/admin/compteurs' },
-    { label: 'Relevés', icon: ClipboardList, path: '/dashboard/admin/releves' },
     { label: 'Anomalies', icon: TriangleAlert, path: '/dashboard/admin/anomalies' },
     { label: 'Comparaison', icon: GitCompare, path: '/dashboard/admin/comparaison' },
     { label: 'Notifications', icon: Bell, path: '/dashboard/admin/notifications' },
@@ -176,7 +178,7 @@ function Sidebar({
         <div className="border-t border-jr-bordure p-4">
           <button
             type="button"
-            onClick={onLogout}
+            onClick={() => setConfirmationOuverte(true)}
             className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-jr-err transition hover:bg-jr-err-pale focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-jr-elec"
           >
             <LogOut size={20} aria-hidden="true" />
@@ -184,6 +186,18 @@ function Sidebar({
           </button>
         </div>
       </aside>
+
+      <ConfirmationDeconnexion
+        open={confirmationOuverte}
+        onAnnuler={() => setConfirmationOuverte(false)}
+        onConfirmer={() => {
+          setConfirmationOuverte(false);
+
+          if (onLogout) {
+            onLogout();
+          }
+        }}
+      />
     </>
   );
 }

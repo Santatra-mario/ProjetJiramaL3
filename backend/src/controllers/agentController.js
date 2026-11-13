@@ -58,6 +58,11 @@ const ANOMALIES_SQL = `(
   FROM anomalies x
   INNER JOIN releves r
     ON r.id = x.releve_id
+  INNER JOIN compteurs c
+    ON c.id = r.compteur_id
+  INNER JOIN abonnes ab
+    ON ab.id = c.abonne_id
+  WHERE LOWER(TRIM(ab.statut)) <> 'supprime'
 )`;
 
 /* =========================================================
@@ -614,6 +619,7 @@ async function getAgentDashboard(
       compteurs,
       compteursActifs,
       abonnes,
+      abonnesActifs,
       relevesMois,
       anomalies,
       notifications,
@@ -624,28 +630,38 @@ async function getAgentDashboard(
 
       pool.query(`
         SELECT
-          COUNT(*)::int AS total
-        FROM compteurs
+          COUNT(DISTINCT c.id)::int AS total
+        FROM compteurs c
+        INNER JOIN abonnes a
+          ON a.id = c.abonne_id
+         AND LOWER(TRIM(a.statut)) = 'actif'
       `),
 
 
       pool.query(`
         SELECT
-          COUNT(*)::int AS total
-
-        FROM compteurs
-
-        WHERE UPPER(
-          TRIM(statut)
-        ) = 'ACTIF'
+          COUNT(DISTINCT c.id)::int AS total
+        FROM compteurs c
+        INNER JOIN abonnes a
+          ON a.id = c.abonne_id
+         AND LOWER(TRIM(a.statut)) = 'actif'
+        WHERE UPPER(TRIM(c.statut)) = 'ACTIF'
       `),
 
 
       pool.query(`
         SELECT
-          COUNT(*)::int AS total
-
+          COUNT(DISTINCT id)::int AS total
         FROM abonnes
+        WHERE LOWER(TRIM(statut)) <> 'supprime'
+      `),
+
+
+      pool.query(`
+        SELECT
+          COUNT(DISTINCT id)::int AS total
+        FROM abonnes
+        WHERE LOWER(TRIM(statut)) = 'actif'
       `),
 
 
@@ -812,6 +828,11 @@ async function getAgentDashboard(
             abonnes.rows[0]?.total
           ),
 
+        abonnesActifs:
+          N(
+            abonnesActifs.rows[0]?.total
+          ),
+
         relevesMois:
           N(
             relevesMois.rows[0]?.total
@@ -898,7 +919,7 @@ async function getAgentCompteurs(
 
           c.type,
 
-          c.date_installation,
+          c.date_installation::text AS date_installation,
 
           c.statut,
 
@@ -914,7 +935,7 @@ async function getAgentCompteurs(
 
           a.telephone AS abonne_telephone,
 
-          l.date_releve AS dernier_releve,
+          l.date_releve::text AS dernier_releve,
 
           l.nouvel_index AS dernier_index,
 
@@ -924,6 +945,7 @@ async function getAgentCompteurs(
 
         INNER JOIN abonnes a
           ON a.id = c.abonne_id
+         AND LOWER(TRIM(a.statut)) = 'actif'
 
         LEFT JOIN LATERAL
         (
@@ -1016,6 +1038,7 @@ async function getAgentAbonnes(
 
         LEFT JOIN compteurs c
           ON c.abonne_id = a.id
+         AND LOWER(TRIM(a.statut)) = 'actif'
 
         LEFT JOIN LATERAL
         (
@@ -1033,6 +1056,8 @@ async function getAgentAbonnes(
           LIMIT 1
 
         ) l ON TRUE
+
+        WHERE LOWER(TRIM(a.statut)) <> 'supprime'
 
         GROUP BY
 
@@ -1116,6 +1141,10 @@ async function getAgentReleves(
           r.date_releve,
 
           r.date_ancien_releve,
+
+          r.type_releve,
+
+          r.observation,
 
           r.ancien_index,
 
@@ -1217,84 +1246,88 @@ async function getAgentRelevesByCompteur(
 
 
   try {
+    const compteurResult = await pool.query(
+      `SELECT c.id, c.numero_compteur, c.statut AS statut_compteur,
+              c.date_installation::text AS date_installation, c.type AS type_compteur,
+              a.statut AS statut_abonne
+       FROM compteurs c
+       INNER JOIN abonnes a ON a.id = c.abonne_id
+       WHERE c.id = $1
+       LIMIT 1`,
+      [compteurId]
+    );
 
-    const result =
-      await pool.query(
-        `
-          SELECT
+    if (compteurResult.rowCount === 0) {
+      return res.status(404).json({
+        status: 'error',
+        code: 'COMPTEUR_INTRouvable',
+        message: 'Compteur introuvable. Vérifiez la référence du compteur ou contactez l’Administrateur.',
+      });
+    }
 
-            r.id,
+    const compteur = compteurResult.rows[0];
+    if (String(compteur.statut_abonne || '').trim().toLowerCase() !== 'actif') {
+      return res.status(403).json({
+        status: 'error',
+        code: 'ABONNE_INACTIF',
+        message: 'Cet abonné n’est pas actif. La saisie d’un nouveau relevé est interdite.',
+      });
+    }
+    if (String(compteur.statut_compteur || '').trim().toUpperCase() === 'INACTIF') {
+      return res.status(403).json({
+        status: 'error',
+        code: 'COMPTEUR_INACTIF',
+        message: 'Ce compteur est inactif. La saisie d’un nouveau relevé est interdite.',
+      });
+    }
 
-            r.compteur_id,
-
-            c.numero_compteur,
-
-            c.type AS type_compteur,
-
-            c.date_installation,
-
-            a.numero_abonne,
-
-            a.nom AS abonne_nom,
-
-            a.prenom AS abonne_prenom,
-
-            r.date_releve,
-
-            r.date_ancien_releve,
-
-            r.ancien_index,
-
-            r.nouvel_index,
-
-            r.consommation,
-
-            CASE
-
-              WHEN c.type = 'EAU'
-                THEN 'm³'
-
-              ELSE 'kWh'
-
-            END AS unite,
-
-            r.created_by,
-
-            r.created_at,
-
-            r.updated_at
-
-          FROM releves r
-
-          INNER JOIN compteurs c
-            ON c.id = r.compteur_id
-
-          INNER JOIN abonnes a
-            ON a.id = c.abonne_id
-
-          WHERE r.compteur_id = $1
-
-          ORDER BY
-
-            r.date_releve DESC,
-
-            r.id DESC
-        `,
-        [compteurId]
-      );
-
+    const result = await pool.query(
+      `WITH ordre_compteur AS (
+         SELECT
+           r.*,
+           LAG(r.date_releve) OVER (ORDER BY r.date_releve, r.id) AS date_precedente_reelle,
+           LAG(r.nouvel_index) OVER (ORDER BY r.date_releve, r.id) AS index_precedent_reel
+         FROM releves r
+         WHERE r.compteur_id = $1
+       )
+       SELECT
+         r.id,
+         r.compteur_id,
+         c.numero_compteur,
+         c.type AS type_compteur,
+         c.date_installation::text AS date_installation,
+         a.numero_abonne,
+         a.nom AS abonne_nom,
+         a.prenom AS abonne_prenom,
+         r.date_releve::text AS date_releve,
+         r.type_releve,
+         r.observation,
+         COALESCE(r.date_ancien_releve, r.date_precedente_reelle)::text AS date_ancien_releve,
+         COALESCE(r.index_precedent_reel, r.ancien_index) AS ancien_index,
+         r.nouvel_index,
+         r.consommation,
+         CASE WHEN c.type = 'EAU' THEN 'm³' ELSE 'kWh' END AS unite,
+         r.created_by,
+         r.created_at,
+         r.updated_at
+       FROM ordre_compteur r
+       INNER JOIN compteurs c ON c.id = r.compteur_id
+       INNER JOIN abonnes a ON a.id = c.abonne_id
+       ORDER BY r.date_releve DESC, r.id DESC`,
+      [compteurId]
+    );
 
     return res.json({
-
-      status:
-        'success',
-
-      data:
-        result.rows,
-
-      total:
-        result.rowCount,
-
+      status: 'success',
+      data: result.rows,
+      total: result.rowCount,
+      compteur: {
+        id: compteur.id,
+        numero_compteur: compteur.numero_compteur,
+        type: compteur.type_compteur,
+        date_installation: compteur.date_installation,
+      },
+      premier_releve_a_saisir: result.rowCount === 0,
     });
 
   } catch (error) {
@@ -1651,6 +1684,7 @@ async function getAgentNotifications(
       await currentAgentEmail(
         req
       );
+    const agentId = Number(req.user?.id);
 
 
     if (!email) {
@@ -1701,6 +1735,16 @@ async function getAgentNotifications(
             n.evenement_cle,
             n.created_at,
 
+            CASE
+              WHEN n.type = 'MISSION_CONTROLE'
+                AND mc.agent_id = $2
+                AND campagne_mission.statut = 'PUBLIEE'
+                AND mc.statut IN ('PLANIFIEE', 'EN_COURS')
+                AND LOWER(TRIM(abonne_mission.statut)) = 'actif'
+              THEN mc.id
+              ELSE NULL
+            END AS mission_id,
+
             COALESCE(a.type_anomalie, n.classification) AS type_anomalie,
             a.statut AS statut_anomalie,
             a.commentaire AS motif_administrateur,
@@ -1732,6 +1776,13 @@ async function getAgentNotifications(
           LEFT JOIN releves r ON r.id = COALESCE(a.releve_id, n.releve_id)
           LEFT JOIN compteurs c ON c.id = COALESCE(a.compteur_id, r.compteur_id)
           LEFT JOIN abonnes ab ON ab.id = c.abonne_id
+          LEFT JOIN missions_controle mc ON mc.id = CASE
+            WHEN n.evenement_cle ~ '^mission:v2:[0-9]+:'
+            THEN split_part(n.evenement_cle, ':', 3)::integer
+            ELSE NULL
+          END
+          LEFT JOIN campagnes_controle campagne_mission ON campagne_mission.id = mc.campagne_id
+          LEFT JOIN abonnes abonne_mission ON abonne_mission.id = mc.abonne_id
 
           WHERE LOWER(TRIM(n.destinataire)) = $1
             AND n.masquee_le IS NULL
@@ -1754,7 +1805,7 @@ async function getAgentNotifications(
 
           LIMIT 200
         `,
-        [email]
+        [email, agentId]
       );
 
 

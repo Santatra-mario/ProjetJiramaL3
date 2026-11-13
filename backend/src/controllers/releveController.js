@@ -1,8 +1,19 @@
 const pool = require('../config/db');
 const { logAudit } = require('../utils/auditLogger');
 const { synchronizeAnomalies } = require('./anomalieController');
+const { notifierMissionAssignee } = require('./controleController');
+const { notifierMissionRealisee } = require('../services/missionNotificationService');
 const { synchroniserNotificationSuiviReleve } = require('../services/consommationNotificationService');
 
+const FUSEAU_JIRAMA = (() => {
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Antananarivo' });
+    return 'Africa/Antananarivo';
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    return 'Indian/Antananarivo';
+  }
+})();
 
 function isValidDateString(value) {
   if (
@@ -29,6 +40,27 @@ function isValidDateString(value) {
     date.getUTCMonth() === month - 1 &&
     date.getUTCDate() === day
   );
+}
+
+function dateDuJourJirama() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: FUSEAU_JIRAMA,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function dateFinMoisSuivant(date = dateDuJourJirama()) {
+  const [year, month] = date.split('-').map(Number);
+  const endDate = new Date(Date.UTC(year, month + 1, 0));
+  return [
+    endDate.getUTCFullYear(),
+    String(endDate.getUTCMonth() + 1).padStart(2, '0'),
+    String(endDate.getUTCDate()).padStart(2, '0'),
+  ].join('-');
 }
 
 /**
@@ -71,12 +103,137 @@ function formatDateOnly(value) {
     value instanceof Date &&
     !Number.isNaN(value.getTime())
   ) {
-    return value
-      .toISOString()
-      .slice(0, 10);
+    /*
+      Une colonne DATE est renvoyée par pg à minuit dans le fuseau du
+      serveur. Passer par toISOString() la décalait d'un jour (minuit
+      local → 21 h UTC la veille). On lit donc les composantes locales.
+    */
+    return [
+      value.getFullYear(),
+      String(value.getMonth() + 1).padStart(2, '0'),
+      String(value.getDate()).padStart(2, '0'),
+    ].join('-');
   }
 
   return String(value).slice(0, 10);
+}
+
+const MOIS_FRANCAIS = [
+  'Janvier',
+  'Février',
+  'Mars',
+  'Avril',
+  'Mai',
+  'Juin',
+  'Juillet',
+  'Août',
+  'Septembre',
+  'Octobre',
+  'Novembre',
+  'Décembre',
+];
+
+/**
+ * Transforme une date (YYYY-MM-DD, Date JS ou timestamp PostgreSQL)
+ * en date française longue : « 09 Novembre 2026 ».
+ * Retourne null si la date est absente ou invalide.
+ */
+function formatDateFrancaiseLongue(value) {
+  const iso = formatDateOnly(value);
+
+  if (!iso || !isValidDateString(iso)) {
+    return null;
+  }
+
+  const [year, month, day] = iso.split('-').map(Number);
+
+  return `${String(day).padStart(2, '0')} ${MOIS_FRANCAIS[month - 1]} ${year}`;
+}
+
+function ajouterJoursCalendaires(value, nombre) {
+  const date = new Date(`${formatDateOnly(value)}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setUTCDate(date.getUTCDate() + nombre);
+  return date.toISOString().slice(0, 10);
+}
+
+function estDateMissionTerrain(dateValue, debutValue, finValue) {
+  const date = formatDateOnly(dateValue);
+  const debut = formatDateOnly(debutValue);
+  const fin = formatDateOnly(finValue);
+  if (!isValidDateString(date) || !isValidDateString(debut) || !isValidDateString(fin)) return false;
+  if (date < debut || date > fin) return false;
+
+  const offset = Math.round(
+    (Date.parse(`${date}T00:00:00Z`) - Date.parse(`${debut}T00:00:00Z`)) / 86400000
+  );
+  const jourDuCycle = offset % 3;
+  if (offset < 1 || jourDuCycle === 0) return false;
+
+  const jourFinalisation = offset - jourDuCycle + 2;
+  const dateFinalisation = ajouterJoursCalendaires(debut, jourFinalisation);
+  return Boolean(dateFinalisation) && dateFinalisation <= fin;
+}
+
+async function creerMissionPeriodiqueSuivante(client, mission) {
+  if (!mission?.suivi_periodique || !mission.responsable_id || !mission.campagne_id) return null;
+  const datePrevue = ajouterJoursCalendaires(mission.date_prevue, 3);
+  if (!datePrevue) return null;
+  const dateDebutCampagne = formatDateOnly(mission.date_debut);
+  const dateFinCampagne = formatDateOnly(mission.date_fin);
+  const decalage = Math.round(
+    (Date.parse(`${datePrevue}T00:00:00Z`) - Date.parse(`${dateDebutCampagne}T00:00:00Z`)) / 86400000
+  );
+  if (
+    !isValidDateString(dateDebutCampagne) ||
+    !isValidDateString(dateFinCampagne) ||
+    datePrevue > dateFinCampagne ||
+    decalage < 1 ||
+    decalage % 3 === 0 ||
+    ajouterJoursCalendaires(dateDebutCampagne, decalage + (2 - (decalage % 3))) > dateFinCampagne
+  ) return { created: false, outsideCampaign: true };
+
+  await client.query('SELECT id FROM compteurs WHERE id = $1 FOR UPDATE', [mission.compteur_id]);
+  const childExists = await client.query(
+    `SELECT id FROM missions_controle
+     WHERE mission_parent_id = $1 OR (compteur_id = $2 AND date_prevue = $3 AND statut <> 'ANNULEE')
+     LIMIT 1 FOR UPDATE`,
+    [mission.id, mission.compteur_id, datePrevue]
+  );
+  if (childExists.rowCount) return { created: false, existing: true };
+
+  const agentResult = await client.query(
+    `SELECT id, email FROM users
+     WHERE id = $1 AND UPPER(TRIM(role)) = 'AGENT' AND LOWER(TRIM(statut)) = 'actif'`,
+    [mission.agent_id]
+  );
+  if (!agentResult.rowCount) return { created: false, agentUnavailable: true };
+
+  const campaignResult = await client.query(
+    `SELECT id, statut FROM campagnes_controle WHERE id = $1 FOR UPDATE`,
+    [mission.campagne_id]
+  );
+  const campagne = campaignResult.rows[0];
+  if (!campagne || campagne.statut !== 'PUBLIEE') return null;
+
+  const created = await client.query(
+    `INSERT INTO missions_controle
+       (campagne_id, abonne_id, compteur_id, agent_id, date_prevue, date_limite,
+        statut, nouvelle_visite, suivi_periodique, mission_parent_id, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $5, 'PLANIFIEE', true, true, $6, $7, $7)
+     RETURNING id`,
+    [mission.campagne_id, mission.abonne_id, mission.compteur_id, mission.agent_id,
+      datePrevue, mission.id, mission.responsable_id]
+  );
+  const missionSuivanteId = created.rows[0]?.id;
+  if (missionSuivanteId) {
+    await notifierMissionAssignee(
+      client,
+      missionSuivanteId,
+      `mission:v2:${missionSuivanteId}:periodique:${mission.id}:${mission.agent_id}`
+    );
+  }
+  return { created: true, missionId: missionSuivanteId, published: true };
 }
 
 /**
@@ -96,9 +253,8 @@ function formatNumber(value) {
  * Cette requête reconstruit l'affichage de la période.
  *
  * IMPORTANT :
- * - pour les relevés suivants, la date précédente affichée
- *   vient de la chronologie réelle du compteur ;
- * - pour le premier relevé, on conserve date_ancien_releve.
+ * - pour les relevés suivants, la date précédente vient de la chronologie ;
+ * - pour le premier relevé, la date de référence enregistrée est conservée.
  */
 const releveSelect = `
   WITH ordered_releves AS (
@@ -138,6 +294,8 @@ const releveSelect = `
     a.adresse AS abonne_adresse,
 
     r.date_releve,
+    r.type_releve,
+    r.observation,
 
     CASE
       WHEN r.date_releve_precedent_calculee IS NOT NULL
@@ -172,14 +330,12 @@ const releveSelect = `
     CASE
       WHEN r.date_releve_precedent_calculee IS NOT NULL
         THEN (
-          r.date_releve -
-          r.date_releve_precedent_calculee
+          r.date_releve - r.date_releve_precedent_calculee
         )
 
       WHEN r.date_ancien_releve IS NOT NULL
         THEN (
-          r.date_releve -
-          r.date_ancien_releve
+          r.date_releve - r.date_ancien_releve
         )
 
       ELSE NULL
@@ -224,6 +380,8 @@ const releveSelect = `
 
   LEFT JOIN users u
     ON u.id = r.created_by
+
+  WHERE LOWER(TRIM(a.statut)) <> 'supprime'
 `;
 
 /* =========================================================
@@ -295,7 +453,7 @@ async function getReleveById(
         `
           ${releveSelect}
 
-          WHERE r.id = $1
+          AND r.id = $1
         `,
         [releveId]
       );
@@ -341,20 +499,35 @@ async function createReleve(
   const {
     compteur_id,
     date_ancien_releve,
-    date_releve,
+    date_releve: dateReleveDemandee,
     ancien_index,
     nouvel_index,
+    mission_id,
+    date_visite_reelle,
+    observation,
   } = req.body || {};
 
-  const compteurId =
+  let compteurId =
     Number(
       compteur_id
     );
+
+  const missionId = mission_id === undefined || mission_id === null || mission_id === ''
+    ? null
+    : Number(mission_id);
 
   const nouvelIndex =
     Number(
       nouvel_index
     );
+  const agentPeutCorrigerDatePrecedente =
+    String(req.user?.role || '').trim().toUpperCase() === 'AGENT';
+
+  // La date Agent est déterminée ci-dessous depuis la mission, jamais
+  // depuis une valeur de date fournie par le navigateur.
+  let date_releve = agentPeutCorrigerDatePrecedente
+    ? null
+    : dateReleveDemandee;
 
   /* =======================================================
      VALIDATION DE BASE
@@ -373,15 +546,32 @@ async function createReleve(
     });
   }
 
-  if (
-    !isValidDateString(
-      date_releve
-    )
-  ) {
+  if (!agentPeutCorrigerDatePrecedente && !isValidDateString(date_releve)) {
     return res.status(400).json({
       status: 'error',
       message:
         'La date du relevé actuel est invalide.',
+    });
+  }
+
+  const dateMaxReleve = dateDuJourJirama();
+  if (!agentPeutCorrigerDatePrecedente && date_releve > dateMaxReleve) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'La date du relevé actuel ne peut pas dépasser la fin du mois prochain.',
+    });
+  }
+
+  if (missionId !== null && (!Number.isInteger(missionId) || missionId <= 0)) {
+    return res.status(400).json({ status: 'error', message: 'Identifiant de mission invalide.' });
+  }
+  if (
+    missionId !== null &&
+    (!isValidDateString(date_visite_reelle) || date_visite_reelle > dateDuJourJirama())
+  ) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'La date réelle de visite doit être valide et ne peut pas être future.',
     });
   }
 
@@ -404,6 +594,95 @@ async function createReleve(
     await client.query(
       'BEGIN'
     );
+
+    let missionControle = null;
+    const dateVisiteReelle = missionId === null ? null : date_visite_reelle;
+    if (missionId !== null) {
+      const missionResult = await client.query(
+          `SELECT mc.id, mc.campagne_id, mc.abonne_id, mc.compteur_id, mc.agent_id,
+            mc.date_prevue::text AS date_prevue,
+            cc.date_debut::text AS date_debut,
+            cc.date_fin::text AS date_fin,
+           mc.statut, mc.releve_id, mc.suivi_periodique, mc.date_visite_reelle,
+           cc.created_by AS responsable_id, a.statut AS statut_abonne,
+           mr.date_releve::text AS releve_date
+         FROM missions_controle mc
+         INNER JOIN campagnes_controle cc ON cc.id = mc.campagne_id
+         INNER JOIN abonnes a ON a.id = mc.abonne_id
+         LEFT JOIN releves mr ON mr.id = mc.releve_id
+         WHERE mc.id = $1 AND mc.agent_id = $2 AND cc.statut = 'PUBLIEE'
+           AND mc.statut <> 'ANNULEE' AND LOWER(TRIM(a.statut)) = 'actif'
+         FOR UPDATE OF mc`,
+        [missionId, req.user.id]
+      );
+      missionControle = missionResult.rows[0] || null;
+      if (!missionControle) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          status: 'error',
+          message: 'Mission introuvable dans les contrôles attribués à votre compte.',
+        });
+      }
+      if (missionControle.releve_id || missionControle.statut === 'TERMINEE') {
+        await client.query('ROLLBACK');
+
+        const dateReleveMission = formatDateFrancaiseLongue(missionControle.releve_date);
+
+        return res.status(409).json({
+          status: 'error',
+          message: dateReleveMission
+            ? `Cette mission possède déjà un relevé enregistré le ${dateReleveMission}.`
+            : 'Cette mission possède déjà un relevé enregistré. La date de ce relevé est indisponible.',
+        });
+      }
+      if (!['PLANIFIEE', 'EN_COURS'].includes(missionControle.statut)) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ status: 'error', message: 'Cette mission n’est pas ouverte à la saisie.' });
+      }
+      if (compteur_id && Number(compteur_id) !== Number(missionControle.compteur_id)) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ status: 'error', message: 'Le compteur ne correspond pas à la mission attribuée.' });
+      }
+      compteurId = Number(missionControle.compteur_id);
+    }
+
+    if (agentPeutCorrigerDatePrecedente) {
+      if (missionControle) {
+        const dateMission = formatDateOnly(missionControle.date_prevue);
+        if (!estDateMissionTerrain(dateMission, missionControle.date_debut, missionControle.date_fin)) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            status: 'error',
+            message: 'Aucune date de descente valide n’est disponible pour cette mission dans le calendrier de la campagne.',
+          });
+        }
+        date_releve = dateMission;
+      } else {
+        date_releve = dateDuJourJirama();
+      }
+
+      if (!isValidDateString(date_releve)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          status: 'error',
+          message: 'La date réelle du relevé est indisponible. Aucune date ne peut être inventée.',
+        });
+      }
+      if (date_releve > dateDuJourJirama()) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          status: 'error',
+          message: 'La date de la mission est future. Le relevé ne peut pas être enregistré avant la journée planifiée.',
+        });
+      }
+      if (date_releve > dateFinMoisSuivant()) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          status: 'error',
+          message: 'La date du relevé actuel ne peut pas dépasser la fin du mois prochain.',
+        });
+      }
+    }
 
     /* =====================================================
        VÉRIFIER LE COMPTEUR
@@ -562,117 +841,64 @@ async function createReleve(
        PREMIER RELEVÉ
     ===================================================== */
 
-    if (
-      !previousReleve
-    ) {
-      /* ---------------------------------------------------
-         DATE PRÉCÉDENTE OBLIGATOIRE
-      --------------------------------------------------- */
+    let typeReleve = 'PERIODIQUE';
 
-      if (
-        !isValidDateString(
-          date_ancien_releve
-        )
-      ) {
-        await client.query(
-          'ROLLBACK'
-        );
+    if (!previousReleve) {
+      const roleUtilisateur = String(req.user?.role || '').trim().toUpperCase();
 
-        return res.status(400).json({
-          status: 'error',
-          message:
-            'Pour le premier relevé, la date du relevé précédent est obligatoire.',
-        });
+      // Pour un Agent qui relève un nouveau compteur sans historique,
+      // la saisie est un index initial : aucune ancienne date/index ni
+      // consommation par différence ne doit être fabriquée.
+      if (roleUtilisateur === 'AGENT') {
+        typeReleve = 'INITIAL';
+        finalDateAncienReleve = null;
+        finalAncienIndex = null;
+      } else {
+        // Conserver le parcours historique du Responsable lorsqu'il
+        // dispose réellement d'un index de référence d'installation.
+        if (!isValidDateString(date_ancien_releve)) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            status: 'error',
+            message: 'Saisissez la date réelle du relevé de référence vérifié.',
+          });
+        }
+
+        if (dateInstallation && date_ancien_releve < dateInstallation) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            status: 'error',
+            message: 'La date du relevé de référence ne peut pas être antérieure à la date d’installation du compteur.',
+          });
+        }
+
+        if (date_ancien_releve >= date_releve) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            status: 'error',
+            message: 'La date de référence doit être antérieure à la date du relevé actuel.',
+          });
+        }
+
+        if (!isValidNonNegativeNumber(ancien_index)) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            status: 'error',
+            message: 'Saisissez un ancien index réel provenant du relevé d’installation vérifié.',
+          });
+        }
+
+        finalDateAncienReleve = date_ancien_releve;
+        finalAncienIndex = Number(ancien_index);
+
+        if (nouvelIndex < finalAncienIndex) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            status: 'error',
+            message: 'Le nouvel index doit être supérieur ou égal à l’index de référence vérifié.',
+          });
+        }
       }
-
-      /* ---------------------------------------------------
-         ANCIEN INDEX OBLIGATOIRE
-      --------------------------------------------------- */
-
-      if (
-        !isValidNonNegativeNumber(
-          ancien_index
-        )
-      ) {
-        await client.query(
-          'ROLLBACK'
-        );
-
-        return res.status(400).json({
-          status: 'error',
-          message:
-            'Pour le premier relevé, l’ancien index est obligatoire et doit être valide.',
-        });
-      }
-
-      const ancienIndex =
-        Number(
-          ancien_index
-        );
-
-      /* ---------------------------------------------------
-         DATE STRICTEMENT ANTÉRIEURE
-      --------------------------------------------------- */
-
-      if (
-        date_ancien_releve >=
-        date_releve
-      ) {
-        await client.query(
-          'ROLLBACK'
-        );
-
-        return res.status(400).json({
-          status: 'error',
-          message:
-            'La date du relevé précédent doit être strictement antérieure à la date du relevé actuel.',
-        });
-      }
-
-      /* ---------------------------------------------------
-         DATE DE RÉFÉRENCE >= INSTALLATION
-      --------------------------------------------------- */
-
-      if (
-        dateInstallation &&
-        date_ancien_releve <
-          dateInstallation
-      ) {
-        await client.query(
-          'ROLLBACK'
-        );
-
-        return res.status(400).json({
-          status: 'error',
-          message:
-            'La date du relevé précédent ne peut pas être antérieure à la date d’installation.',
-        });
-      }
-
-      /* ---------------------------------------------------
-         INDEX CROISSANT
-      --------------------------------------------------- */
-
-      if (
-        nouvelIndex <
-        ancienIndex
-      ) {
-        await client.query(
-          'ROLLBACK'
-        );
-
-        return res.status(400).json({
-          status: 'error',
-          message:
-            'Le nouvel index doit être supérieur ou égal à l’ancien index réel.',
-        });
-      }
-
-      finalDateAncienReleve =
-        date_ancien_releve;
-
-      finalAncienIndex =
-        ancienIndex;
     }
 
     /* =====================================================
@@ -711,8 +937,48 @@ async function createReleve(
         });
       }
 
-      finalDateAncienReleve =
-        previousDate;
+      const dateReferenceDemandee = !agentPeutCorrigerDatePrecedente || date_ancien_releve === undefined
+        ? previousDate
+        : date_ancien_releve;
+
+      if (!isValidDateString(dateReferenceDemandee)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          status: 'error',
+          message: 'La date du relevé précédent est invalide.',
+        });
+      }
+
+      if (dateInstallation && dateReferenceDemandee < dateInstallation) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          status: 'error',
+          message: 'La date du relevé précédent ne peut pas être antérieure à la date d’installation.',
+        });
+      }
+
+      if (dateReferenceDemandee >= date_releve) {
+        await client.query('ROLLBACK');
+
+        const dateReferenceLongue = formatDateFrancaiseLongue(dateReferenceDemandee);
+
+        return res.status(400).json({
+          status: 'error',
+          message: dateReferenceLongue
+            ? `La date du relevé précédent (${dateReferenceLongue}) doit être antérieure à la date du relevé actuel.`
+            : 'La date du relevé précédent doit être antérieure à la date du relevé actuel.',
+        });
+      }
+
+      if (dateReferenceDemandee > previousDate) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          status: 'error',
+          message: 'La date du relevé précédent ne peut pas être postérieure au dernier relevé valide de ce compteur.',
+        });
+      }
+
+      finalDateAncienReleve = dateReferenceDemandee;
 
       finalAncienIndex =
         previousIndex;
@@ -729,10 +995,13 @@ async function createReleve(
           'ROLLBACK'
         );
 
+        const datePrecedentLongue = formatDateFrancaiseLongue(previousDate);
+
         return res.status(400).json({
           status: 'error',
-          message:
-            'La date du nouveau relevé doit être postérieure au relevé précédent.',
+          message: datePrecedentLongue
+            ? `La date du nouveau relevé doit être postérieure au dernier relevé enregistré le ${datePrecedentLongue}.`
+            : 'La date du nouveau relevé doit être postérieure au relevé précédent.',
         });
       }
 
@@ -790,10 +1059,13 @@ async function createReleve(
         'ROLLBACK'
       );
 
+      const dateDoublonLongue = formatDateFrancaiseLongue(date_releve);
+
       return res.status(409).json({
         status: 'error',
-        message:
-          'Un relevé existe déjà pour ce compteur à cette date.',
+        message: dateDoublonLongue
+          ? `Cette date possède déjà un relevé enregistré pour ce compteur (${dateDoublonLongue}). Veuillez choisir une date autorisée.`
+          : 'Cette date possède déjà un relevé enregistré pour ce compteur. Veuillez choisir une date autorisée.',
       });
     }
 
@@ -801,17 +1073,13 @@ async function createReleve(
        CALCUL CONSOMMATION
     ===================================================== */
 
-    const consommation =
-      formatNumber(
-        nouvelIndex -
-        finalAncienIndex
-      );
+    const consommation = typeReleve === 'INITIAL'
+      ? null
+      : formatNumber(nouvelIndex - finalAncienIndex);
 
     if (
-      !Number.isFinite(
-        consommation
-      ) ||
-      consommation < 0
+      typeReleve !== 'INITIAL' &&
+      (!Number.isFinite(consommation) || consommation < 0)
     ) {
       await client.query(
         'ROLLBACK'
@@ -838,19 +1106,11 @@ async function createReleve(
             ancien_index,
             nouvel_index,
             consommation,
-            created_by
+            created_by,
+            type_releve,
+            observation
           )
-
-          VALUES (
-            $1,
-            $2,
-            $3,
-            $4,
-            $5,
-            $6,
-            $7
-          )
-
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
           RETURNING id
         `,
         [
@@ -861,37 +1121,66 @@ async function createReleve(
           nouvelIndex,
           consommation,
           req.user.id,
+          typeReleve,
+          typeof observation === 'string' ? observation.trim().slice(0, 2000) || null : null,
         ]
       );
+
+    if (missionControle) {
+      const missionUpdate = await client.query(
+        `UPDATE missions_controle
+         SET releve_id = $1, statut = 'TERMINEE',
+             resultat_visite = 'RELEVE_ENREGISTRE',
+             date_visite_reelle = $4::date,
+             updated_by = $2, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $3
+         RETURNING date_visite_reelle::text AS date_visite_reelle`,
+        [insertResult.rows[0].id, req.user.id, missionId, dateVisiteReelle]
+      );
+      /* Notification opérationnelle de mission : contrôle réellement
+         réalisé, relevé transmis, destinataires Responsable + Administrateur.
+         Dédupliquée par mission et par relevé transmis. */
+      await notifierMissionRealisee(client, missionId, {
+        releveId: insertResult.rows[0].id,
+      });
+      await creerMissionPeriodiqueSuivante(client, {
+        ...missionControle,
+        date_visite_reelle: missionUpdate.rows[0]?.date_visite_reelle || dateDuJourJirama(),
+      });
+    }
 
     await client.query(
       'COMMIT'
     );
 
-    await logAudit({ actorId: req.user?.id, actorRole: req.user?.role, action: 'RELEVE_CREE', resourceType: 'releve', resourceId: insertResult.rows[0].id, details: { compteur_id: compteurId, consommation } });
+    await logAudit({ actorId: req.user?.id, actorRole: req.user?.role, action: 'RELEVE_CREE', resourceType: 'releve', resourceId: insertResult.rows[0].id, details: { compteur_id: compteurId, type_releve: typeReleve, consommation, mission_id: missionId } });
 
-    try {
-      await synchronizeAnomalies();
-    } catch (analysisError) {
-      console.error(
-        'Erreur synchronisation des anomalies après création du relevé :',
-        analysisError
-      );
-    }
+    if (typeReleve !== 'INITIAL') {
+      try {
+        await synchronizeAnomalies();
+      } catch (analysisError) {
+        console.error(
+          'Erreur synchronisation des anomalies après création du relevé :',
+          analysisError
+        );
+      }
 
-    try {
-      await synchroniserNotificationSuiviReleve(insertResult.rows[0].id);
-    } catch (notificationError) {
-      console.error(
-        'Erreur notification de suivi après création du relevé :',
-        notificationError
-      );
+      try {
+        await synchroniserNotificationSuiviReleve(insertResult.rows[0].id);
+      } catch (notificationError) {
+        console.error(
+          'Erreur notification de suivi après création du relevé :',
+          notificationError
+        );
+      }
     }
 
     return res.status(201).json({
       status: 'success',
-      message:
-        'Relevé enregistré avec succès.',
+      message: typeReleve === 'INITIAL'
+        ? 'Premier relevé enregistré avec succès. L’index initial est disponible comme référence pour les prochains relevés.'
+        : 'Relevé enregistré avec succès.',
+      type_releve: typeReleve,
       releve_id:
         insertResult.rows[0].id,
     });
@@ -952,10 +1241,11 @@ async function updateReleve(
 
   const {
     date_ancien_releve,
-    date_releve,
+    date_releve: dateReleveDemandee,
     ancien_index,
     nouvel_index,
   } = req.body || {};
+  let date_releve = dateReleveDemandee;
 
   const releveId =
     Number(id);
@@ -964,6 +1254,8 @@ async function updateReleve(
     Number(
       nouvel_index
     );
+  const agentPeutCorrigerDatePrecedente =
+    String(req.user?.role || '').trim().toUpperCase() === 'AGENT';
 
   /* =====================================================
      VALIDATION DE BASE
@@ -991,6 +1283,16 @@ async function updateReleve(
       status: 'error',
       message:
         'Date du relevé invalide.',
+    });
+  }
+
+  const dateMaxReleve = agentPeutCorrigerDatePrecedente
+    ? dateFinMoisSuivant()
+    : dateDuJourJirama();
+  if (date_releve > dateMaxReleve) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'La date du relevé actuel ne peut pas dépasser la fin du mois prochain.',
     });
   }
 
@@ -1062,6 +1364,26 @@ async function updateReleve(
     const current =
       currentResult.rows[0];
 
+    if (Number(current.created_by) !== Number(req.user?.id)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({
+        status: 'error',
+        message: 'Vous ne pouvez corriger que les relevés enregistrés par votre compte Agent.',
+      });
+    }
+
+    if (agentPeutCorrigerDatePrecedente) {
+      const dateReleveEnregistree = formatDateOnly(current.date_releve);
+      if (date_releve !== dateReleveEnregistree) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          status: 'error',
+          message: 'La date du relevé actuel est conservée et ne peut pas être modifiée lors d’une correction.',
+        });
+      }
+      date_releve = dateReleveEnregistree;
+    }
+
     /* =====================================================
        COMPTEUR ACTIF
     ===================================================== */
@@ -1128,7 +1450,9 @@ async function updateReleve(
             date_releve,
             ancien_index,
             nouvel_index,
-            consommation
+            consommation,
+            type_releve,
+            observation
 
           FROM releves
 
@@ -1143,8 +1467,119 @@ async function updateReleve(
         [compteurId]
       );
 
-    const history =
-      historyResult.rows;
+    const history = historyResult.rows;
+
+    if (history.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        status: 'error',
+        message: 'L’historique du compteur est vide.',
+      });
+    }
+
+    // Un index initial n'a ni ancien index ni consommation. Sa correction
+    // conserve cette règle et recalcule uniquement les relevés périodiques
+    // qui le suivent dans la chronologie du même compteur.
+    if (String(current.type_releve || '').toUpperCase() === 'INITIAL') {
+      const sortedHistory = [...history].sort((a, b) =>
+        formatDateOnly(a.date_releve).localeCompare(formatDateOnly(b.date_releve)) || Number(a.id) - Number(b.id)
+      );
+      if (Number(sortedHistory[0]?.id) !== releveId) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({
+          status: 'error',
+          message: 'Le relevé initial ne peut pas être déplacé après un relevé périodique.',
+        });
+      }
+      if (dateInstallation && date_releve < dateInstallation) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          status: 'error',
+          message: 'La date du premier relevé ne peut pas être antérieure à la date d’installation du compteur.',
+        });
+      }
+      if (sortedHistory.slice(1).some((row) => formatDateOnly(row.date_releve) === date_releve)) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({
+          status: 'error',
+          message: 'Un autre relevé existe déjà à cette date pour ce compteur.',
+        });
+      }
+      const nextPeriodic = sortedHistory[1] || null;
+      if (nextPeriodic && date_releve >= formatDateOnly(nextPeriodic.date_releve)) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({
+          status: 'error',
+          message: 'La date du relevé initial doit rester antérieure au premier relevé périodique.',
+        });
+      }
+
+      await client.query(
+        `UPDATE releves
+         SET date_releve = $1,
+             ancien_index = NULL,
+             date_ancien_releve = NULL,
+             nouvel_index = $2,
+             consommation = NULL,
+             observation = $3,
+             type_releve = 'INITIAL',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $4`,
+        [date_releve, nouvelIndex, typeof req.body?.observation === 'string' ? req.body.observation.trim().slice(0, 2000) || null : current.observation || null, releveId]
+      );
+
+      let previousDate = date_releve;
+      let previousIndex = nouvelIndex;
+      const updatedPeriodicIds = [];
+      for (const row of sortedHistory.slice(1)) {
+        const rowDate = formatDateOnly(row.date_releve);
+        const rowIndex = Number(row.nouvel_index);
+        if (!isValidDateString(rowDate) || rowDate <= previousDate) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ status: 'error', message: 'Les dates des relevés périodiques doivent rester strictement postérieures au relevé initial.' });
+        }
+        if (!Number.isFinite(rowIndex) || rowIndex < previousIndex) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ status: 'error', message: 'La correction de l’index initial rendrait un relevé périodique incohérent. Vérifiez les index concernés.' });
+        }
+        const nextConsumption = formatNumber(rowIndex - previousIndex);
+        await client.query(
+          `UPDATE releves
+           SET date_ancien_releve = $1,
+               ancien_index = $2,
+               consommation = $3,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = $4`,
+          [previousDate, previousIndex, nextConsumption, row.id]
+        );
+        updatedPeriodicIds.push(Number(row.id));
+        previousDate = rowDate;
+        previousIndex = rowIndex;
+      }
+
+      await client.query('COMMIT');
+      await logAudit({
+        actorId: req.user?.id,
+        actorRole: req.user?.role,
+        action: 'RELEVE_INITIAL_MODIFIE',
+        resourceType: 'releve',
+        resourceId: releveId,
+        details: { compteur_id: compteurId, date_releve, nouvel_index: nouvelIndex, releves_recalcules: updatedPeriodicIds },
+      });
+      try {
+        await synchronizeAnomalies();
+      } catch (analysisError) {
+        console.error('Erreur synchronisation des anomalies après correction du relevé initial :', analysisError);
+      }
+      for (const updatedId of updatedPeriodicIds) {
+        try {
+          await synchroniserNotificationSuiviReleve(updatedId);
+        } catch (notificationError) {
+          console.error(`Erreur notification après correction du relevé initial #${updatedId} :`, notificationError);
+        }
+      }
+      return res.status(200).json({ status: 'success', message: 'Index initial corrigé. Les relevés périodiques suivants ont été recalculés.', type_releve: 'INITIAL' });
+    }
 
     if (
       history.length ===
@@ -1322,19 +1757,24 @@ async function updateReleve(
        CAS 1 :
        LE RELEVÉ MODIFIÉ RESTE LE PREMIER
        
-       Dans ce cas, la date de référence et l'ancien index
-       peuvent être modifiés par l'utilisateur.
+       Dans ce cas, l'Agent peut corriger la date de référence.
+       L'ancien index reste celui enregistré en base.
     ===================================================== */
 
     if (
       resultingFirstId ===
       releveId
     ) {
-      if (
-        !isValidDateString(
-          date_ancien_releve
-        )
-      ) {
+      const dateReferenceEnregistree = formatDateOnly(current.date_ancien_releve);
+      const indexReferenceEnregistre = Number(current.ancien_index);
+      const dateReferenceDemandee = date_ancien_releve === undefined
+        ? dateReferenceEnregistree
+        : date_ancien_releve;
+      const indexReferenceDemande = ancien_index === undefined
+        ? indexReferenceEnregistre
+        : Number(ancien_index);
+
+      if (!isValidDateString(dateReferenceDemandee) || !Number.isFinite(indexReferenceEnregistre)) {
         await client.query(
           'ROLLBACK'
         );
@@ -1342,33 +1782,29 @@ async function updateReleve(
         return res.status(400).json({
           status: 'error',
           message:
-            'Pour le premier relevé, la date du relevé précédent est obligatoire.',
+            'La date de référence du premier relevé est invalide ou son index de référence est incohérent.',
         });
       }
 
       if (
-        !isValidNonNegativeNumber(
-          ancien_index
-        )
+        (!agentPeutCorrigerDatePrecedente && dateReferenceDemandee !== dateReferenceEnregistree) ||
+        indexReferenceDemande !== indexReferenceEnregistre
       ) {
         await client.query(
           'ROLLBACK'
         );
 
-        return res.status(400).json({
+        return res.status(403).json({
           status: 'error',
           message:
-            'Pour le premier relevé, l’ancien index est obligatoire et doit être valide.',
+            'L’index de référence du premier relevé reste en lecture seule. Seule sa date peut être corrigée ici.',
         });
       }
 
-      baselineDate =
-        date_ancien_releve;
-
-      baselineIndex =
-        Number(
-          ancien_index
-        );
+      baselineDate = agentPeutCorrigerDatePrecedente
+        ? dateReferenceDemandee
+        : dateReferenceEnregistree;
+      baselineIndex = indexReferenceEnregistre;
     }
 
     /* =====================================================
@@ -1611,6 +2047,45 @@ async function updateReleve(
         });
       }
 
+      const estLigneModifiee = Number(row.id) === releveId;
+      const dateReferenceLigne = agentPeutCorrigerDatePrecedente && estLigneModifiee
+        ? (date_ancien_releve !== undefined
+          ? date_ancien_releve
+          : formatDateOnly(current.date_ancien_releve) || previousDate)
+        : previousDate;
+
+      if (!isValidDateString(dateReferenceLigne)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          status: 'error',
+          message: 'La date du relevé précédent est invalide.',
+        });
+      }
+
+      if (dateInstallation && dateReferenceLigne < dateInstallation) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          status: 'error',
+          message: 'La date du relevé précédent ne peut pas être antérieure à la date d’installation.',
+        });
+      }
+
+      if (dateReferenceLigne > previousDate) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          status: 'error',
+          message: 'La date du relevé précédent ne peut pas être postérieure au dernier relevé valide de ce compteur.',
+        });
+      }
+
+      if (dateReferenceLigne >= rowDate) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          status: 'error',
+          message: 'La date du relevé précédent doit être antérieure à la date du relevé actuel.',
+        });
+      }
+
       recalculatedRows.push({
         id:
           Number(
@@ -1621,7 +2096,7 @@ async function updateReleve(
           rowDate,
 
         date_ancien_releve:
-          previousDate,
+          dateReferenceLigne,
 
         ancien_index:
           previousIndex,
@@ -1710,7 +2185,18 @@ async function updateReleve(
       'COMMIT'
     );
 
-    await logAudit({ actorId: req.user?.id, actorRole: req.user?.role, action: 'RELEVE_MODIFIE', resourceType: 'releve', resourceId: releveId, details: {} });
+    await logAudit({
+      actorId: req.user?.id,
+      actorRole: req.user?.role,
+      action: 'RELEVE_MODIFIE',
+      resourceType: 'releve',
+      resourceId: releveId,
+      details: {
+        date_releve_avant: formatDateOnly(current.date_releve),
+        date_releve_apres: date_releve,
+        releves_recalcules: relevesAReNotifier,
+      },
+    });
 
     try {
       await synchronizeAnomalies();
@@ -1961,7 +2447,7 @@ async function getRelevesByCompteur(
         `
           ${releveSelect}
 
-          WHERE r.compteur_id = $1
+          AND r.compteur_id = $1
 
           ORDER BY
             r.date_releve DESC,

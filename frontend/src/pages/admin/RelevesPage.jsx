@@ -29,6 +29,10 @@ import axiosClient from '../../api/axiosClient.js';
 import Sidebar from '../../components/admin/Sidebar.jsx';
 import Header from '../../components/admin/Header.jsx';
 import AdminShell from '../../components/admin/AdminShell.jsx';
+import ResponsableLayout from '../../components/admin/responsable/ResponsableLayout.jsx';
+import CreationTransition, { useCreationTransition } from '../../components/ui/CreationTransition.jsx';
+import { estDebutGroupeReleves } from '../../components/admin/releves/relevesUtils.js';
+import { ecouterChangementAbonnes } from '../../hooks/abonnesSync.js';
 
 /* =========================================================
    UTILITAIRES
@@ -58,6 +62,19 @@ function formatDate(value) {
   }
 
   return date.toLocaleDateString('fr-FR');
+}
+
+function formatDateInstallation(value) {
+  if (!value) return '—';
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value).slice(0, 10));
+  if (!match) return '—';
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const check = new Date(Date.UTC(year, month - 1, day));
+  if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day) return '—';
+  const months = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
+  return `${day} ${months[month - 1]} ${year}`;
 }
 
 function toInputDate(value) {
@@ -342,8 +359,16 @@ const teinteAbonne = (numero) => {
 function RelevesPage() {
   const navigate = useNavigate();
 
+  const { transitionActive, jouerTransition } = useCreationTransition();
+
   const [currentUser, setCurrentUser] =
-    useState(null);
+    useState(() => {
+      try {
+        return JSON.parse(localStorage.getItem('user') || 'null');
+      } catch {
+        return null;
+      }
+    });
 
   const [releves, setReleves] =
     useState([]);
@@ -419,12 +444,9 @@ function RelevesPage() {
       const user =
         JSON.parse(storedUser);
 
-      if (
-        ![
-          'ADMINISTRATEUR',
-          'AGENT',
-        ].includes(user.role)
-      ) {
+      const role = String(user?.role || '').trim().toUpperCase();
+
+      if (!['AGENT', 'RESPONSABLE'].includes(role)) {
         navigate('/', {
           replace: true,
         });
@@ -546,6 +568,10 @@ function RelevesPage() {
 
     loadReleves();
     loadCompteurs();
+    return ecouterChangementAbonnes(() => {
+      loadReleves();
+      loadCompteurs();
+    });
   }, [currentUser]);
 
   /* =========================================================
@@ -1498,6 +1524,9 @@ function RelevesPage() {
               '/releves',
               payload
             );
+
+            // Bref écran de chargement JIRAMA pendant le rechargement de la liste.
+            jouerTransition();
         }
 
         setSuccess(
@@ -1590,11 +1619,16 @@ function RelevesPage() {
     };
 
   /* =========================================================
-     GÉNÉRER PDF
-     
-     IMPORTANT :
-     Ceci reste un aperçu de projet / simulation.
-     Ce n'est pas une facture JIRAMA officielle.
+     GÉNÉRER PDF — FACTURE COMBINÉE EAU + ÉLECTRICITÉ
+
+     Mise en page alignée sur la facture JIRAMA de référence.
+     - La détection des services repose sur les compteurs et
+       relevés réels de l'abonné (abonne_id), jamais sur le
+       seul type de compteur depuis lequel on lance le PDF.
+     - Les tarifs / taxes restent ceux de FACTURATION_TEMPORAIRE
+       (aucun nouveau calcul).
+     - Le « MONTANT DÉJÀ PAYÉ » vient de la table `paiements`
+       via GET /api/paiements/facture (abonne_id + période).
   ========================================================== */
 
   const generateRelevePDF = async (releve) => {
@@ -1607,195 +1641,333 @@ function RelevesPage() {
 
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
-      const margin = 12;
+      const margin = 10;
       const contentWidth = pageWidth - margin * 2;
-      const bottomLimit = pageHeight - 15;
 
       const BLUE = [0, 78, 145];
       const ORANGE = [205, 112, 45];
-      const LIGHT_BLUE = [239, 245, 251];
+      const LIGHT_BLUE = [236, 243, 250];
       const LIGHT_ORANGE = [252, 244, 237];
-      const LIGHT_GRAY = [247, 247, 247];
       const DARK = [35, 35, 35];
       const GRAY = [95, 95, 95];
-      const BORDER = [195, 195, 195];
+      const BORDER = [90, 130, 175];
+
+      /* ----------------------------------------------------
+         Formatage numérique pour jsPDF.
+         toLocaleString('fr-FR') produit des espaces insécables
+         (U+00A0 / U+202F) que jsPDF encode en caractère nul
+         dans le flux du PDF : on les remplace par des espaces
+         ASCII pour que montants et mois restent lisibles.
+      ---------------------------------------------------- */
+      const espacesVisibles = (texte) => String(texte).replace(/[\u00A0\u202F]/g, ' ');
+
+      const formatAmount = (value) =>
+        espacesVisibles(
+          Number(value || 0).toLocaleString('fr-FR', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })
+        );
 
       const dateReleve = toInputDate(releve.date_releve);
+      const periodeFacture = dateReleve.slice(0, 7); // YYYY-MM : période mensuelle de la facture.
+      const normalizeTypeCompteur = (value) => String(value || '').trim().toUpperCase();
+      const isSameAbonne = (item) => {
+        // Préférer l'identifiant relationnel ; utiliser le numéro d'abonné uniquement
+        // lorsque l'API ne fournit pas l'identifiant.
+        if (releve.abonne_id != null && item.abonne_id != null) {
+          return Number(item.abonne_id) === Number(releve.abonne_id);
+        }
+        return String(item.numero_abonne || '') === String(releve.numero_abonne || '');
+      };
 
-      const relevesMemeDocument = releves.filter(
-        (item) =>
-          String(item.numero_abonne || '') === String(releve.numero_abonne || '') &&
-          toInputDate(item.date_releve) === dateReleve
+      const relevesMemePeriode = releves.filter((item) =>
+        isSameAbonne(item) && toInputDate(item.date_releve).slice(0, 7) === periodeFacture
       );
+      if (!relevesMemePeriode.some((item) => Number(item.id) === Number(releve.id))) {
+        relevesMemePeriode.push(releve);
+      }
 
-      const relevesPDF = relevesMemeDocument.length > 0 ? relevesMemeDocument : [releve];
+      const latestByType = (type) => relevesMemePeriode
+        .filter((item) => normalizeTypeCompteur(item.type_compteur || item.type) === type)
+        .sort((a, b) => {
+          const dateDiff = toInputDate(b.date_releve).localeCompare(toInputDate(a.date_releve));
+          return dateDiff || Number(b.id || 0) - Number(a.id || 0);
+        })[0] || null;
 
-      const elec =
-        relevesPDF.find((item) => item.type_compteur === 'ELECTRICITE') || null;
-      const eau =
-        relevesPDF.find((item) => item.type_compteur === 'EAU') || null;
+      const elec = latestByType('ELECTRICITE');
+      const eau = latestByType('EAU');
 
+      // Déterminer les services réellement associés à l'abonné à partir de /api/compteurs.
+      const compteursAbonne = compteurs.filter((item) => {
+        if (releve.abonne_id != null && item.abonne_id != null) {
+          return Number(item.abonne_id) === Number(releve.abonne_id);
+        }
+        return String(item.numero_abonne || '') === String(releve.numero_abonne || '');
+      });
+      const typesCompteursAbonne = new Set(
+        compteursAbonne.map((item) => normalizeTypeCompteur(item.type_compteur || item.type))
+      );
+      const possedeElectricite = typesCompteursAbonne.has('ELECTRICITE');
+      const possedeEau = typesCompteursAbonne.has('EAU');
+
+      // Ne pas émettre silencieusement une facture combinée incomplète si le compteur
+      // du service existe, mais que son relevé de la période n'est pas disponible.
+      const servicesManquants = [];
+      if (possedeElectricite && !elec) servicesManquants.push('électricité');
+      if (possedeEau && !eau) servicesManquants.push('eau');
+      if (servicesManquants.length > 0) {
+        setError(
+          `Facture non générée : le relevé ${servicesManquants.join(' et ')} est absent pour ${periodeFacture}. Vérifiez la période avant de générer la facture combinée.`
+        );
+        return;
+      }
+      if (!elec && !eau) {
+        setError('Facture non générée : aucun relevé valide trouvé pour cet abonné et cette période.');
+        return;
+      }
+
+      /* =====================================================
+         PAIEMENTS RÉELLEMENT ENREGISTRÉS (table `paiements`)
+         Source du « MONTANT DÉJÀ PAYÉ » (6) et du NET À PAYER.
+      ===================================================== */
+      let montantDejaPaye = null;
+      let nombrePaiements = 0;
+
+      if (releve.abonne_id != null) {
+        try {
+          const reponse = await axiosClient.get('/paiements/facture', {
+            params: {
+              abonne_id: Number(releve.abonne_id),
+              periode: periodeFacture,
+            },
+          });
+
+          if (reponse.data && reponse.data.status === 'success') {
+            montantDejaPaye = Math.max(0, Number(reponse.data.montant_paye || 0));
+            nombrePaiements = Number(reponse.data.nombre_paiements || 0);
+          }
+        } catch (paiementError) {
+          console.warn(
+            'Paiements indisponibles pour la facture :',
+            paiementError?.response?.data?.message || paiementError.message
+          );
+        }
+      }
+
+      // Repli sur un champ éventuellement transmis par l'API relevés, à défaut
+      // d'identifiant d'abonné ou d'endpoint joignable. La base confirme alors
+      // l'absence de paiement via montant_paye = 0.
+      if (montantDejaPaye === null) {
+        const paidAmountRaw = [
+          releve.montant_deja_paye,
+          releve.montant_paye,
+          releve.total_paye,
+          releve.montant_regle,
+        ].find((value) => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)));
+
+        if (paidAmountRaw !== undefined) {
+          montantDejaPaye = Math.max(0, Number(paidAmountRaw));
+        }
+      }
+
+      const paiementDisponible = montantDejaPaye !== null;
+
+      /* =====================================================
+         MONTANTS — CALCULS EXISTANTS, AUCUNE RÈGLE MODIFIÉE
+      ===================================================== */
+      const elecConso = Number(elec?.consommation || 0);
+      const eauConso = Number(eau?.consommation || 0);
+      const elecUnit = FACTURATION_TEMPORAIRE.ELECTRICITE.prixUnitaire;
+      const eauUnit = FACTURATION_TEMPORAIRE.EAU.prixUnitaire;
+      const elecMontantConso = elecConso * elecUnit;
+      const eauMontantConso = eauConso * eauUnit;
+      const fmtServiceAmount = (service, value) => (service ? formatAmount(value) : '—');
+
+      const montantFacture =
+        (elec ? Number(FACTURATION_TEMPORAIRE.totalElectricite) : 0) +
+        (eau ? Number(FACTURATION_TEMPORAIRE.totalEau) : 0);
+
+      // Arrondi au centime : la somme des deux totaux (55 236,26 + 8 025,83)
+      // et le montant payé diffèrent parfois d'un reliquat flottant (1e-12),
+      // qui ferait afficher « PAYÉE PARTIELLEMENT » sur une facture soldée.
+      const netAPayer = paiementDisponible
+        ? Math.max(0, Math.round((montantFacture - montantDejaPaye) * 100) / 100)
+        : null;
+
+      const statutPaiement = !paiementDisponible
+        ? 'À VÉRIFIER'
+        : netAPayer <= 0
+          ? 'PAYÉE'
+          : montantDejaPaye > 0
+            ? 'PAYÉE PARTIELLEMENT'
+            : 'NON RÉGLÉE';
+
+      /* =====================================================
+         MONTANT EN TOUTES LETTRES (comme la facture de réf.)
+      ===================================================== */
+      const CHIFFRES_LETTRES = [
+        'ZÉRO', 'UN', 'DEUX', 'TROIS', 'QUATRE', 'CINQ', 'SIX', 'SEPT', 'HUIT', 'NEUF',
+        'DIX', 'ONZE', 'DOUZE', 'TREIZE', 'QUATORZE', 'QUINZE', 'SEIZE',
+        'DIX-SEPT', 'DIX-HUIT', 'DIX-NEUF',
+      ];
+      const DIZAINES_LETTRES = [
+        '', '', 'VINGT', 'TRENTE', 'QUARANTE', 'CINQUANTE',
+        'SOIXANTE', 'SOIXANTE', 'QUATRE-VINGT', 'QUATRE-VINGT',
+      ];
+
+      const nombreEnLettres = (nombre) => {
+        const n = Math.floor(Math.abs(nombre));
+
+        if (n < 20) return CHIFFRES_LETTRES[n];
+
+        if (n < 100) {
+          const d = Math.floor(n / 10);
+          const u = n % 10;
+
+          if (n === 71) return 'SOIXANTE ET ONZE';
+          if (d === 7 || d === 9) return `${DIZAINES_LETTRES[d]}-${CHIFFRES_LETTRES[10 + u]}`;
+          if (u === 0) return d === 8 ? 'QUATRE-VINGTS' : DIZAINES_LETTRES[d];
+          if (u === 1 && d !== 8) return `${DIZAINES_LETTRES[d]} ET UN`;
+          return `${DIZAINES_LETTRES[d]}-${CHIFFRES_LETTRES[u]}`;
+        }
+
+        if (n < 1000) {
+          const c = Math.floor(n / 100);
+          const r = n % 100;
+          const tete = c === 1 ? 'CENT' : `${CHIFFRES_LETTRES[c]} CENT`;
+          if (r === 0) return c === 1 ? 'CENT' : `${tete}S`;
+          return `${tete} ${nombreEnLettres(r)}`;
+        }
+
+        if (n < 1000000) {
+          const m = Math.floor(n / 1000);
+          const r = n % 1000;
+          const tete = m === 1 ? 'MILLE' : `${nombreEnLettres(m)} MILLE`;
+          return r === 0 ? tete : `${tete} ${nombreEnLettres(r)}`;
+        }
+
+        const mi = Math.floor(n / 1000000);
+        const r = n % 1000000;
+        const tete = mi === 1 ? 'UN MILLION' : `${nombreEnLettres(mi)} MILLIONS`;
+        return r === 0 ? tete : `${tete} ${nombreEnLettres(r)}`;
+      };
+
+      const montantEnLettres = (valeur) => {
+        const entier = Math.floor(valeur);
+        const centimes = Math.round((valeur - entier) * 100);
+
+        let texte = nombreEnLettres(entier);
+        if (centimes > 0) {
+          texte += ` ARIARY ${centimes < 10 ? `ZÉRO ${CHIFFRES_LETTRES[centimes]}` : nombreEnLettres(centimes)}`;
+        } else {
+          texte += ' ARIARY';
+        }
+        return `***${texte}***`;
+      };
+
+      /* =====================================================
+         IDENTITÉ DE LA FACTURE
+      ===================================================== */
       const abonnement = releve.numero_abonne || 'Non renseigné';
       const nomAbonne =
         [releve.abonne_prenom, releve.abonne_nom].filter(Boolean).join(' ') ||
         'Non renseigné';
       const adresse = releve.abonne_adresse || 'Non renseignée';
 
-      const moisFacture = new Date(
-        `${dateReleve || getToday()}T00:00:00`
-      ).toLocaleDateString('fr-FR', {
-        month: 'long',
-        year: 'numeric',
-      });
+      const moisFacture = espacesVisibles(
+        new Date(`${dateReleve || getToday()}T00:00:00`).toLocaleDateString('fr-FR', {
+          month: 'long',
+          year: 'numeric',
+        })
+      );
 
-      const factureNumero = `REL-${String(dateReleve || getToday()).replaceAll('-', '')}-${String(
-        releve.id || 0
-      ).padStart(5, '0')}`;
+      // Un même abonné et un même mois produisent le même numéro de facture,
+      // qu'on lance le PDF depuis le relevé EAU ou ÉLECTRICITÉ.
+      const referenceAbonnePDF = String(releve.abonne_id || abonnement)
+        .replace(/[^a-zA-Z0-9_-]/g, '')
+        .slice(-12) || 'ABONNE';
+      const factureNumero = `REL-${periodeFacture.replace('-', '')}-${referenceAbonnePDF}`;
 
       const safeText = (value, fallback = '—') =>
         value === null || value === undefined || value === '' ? fallback : String(value);
 
-      const drawLogo = (x, y) => {
-        doc.setFillColor(...ORANGE);
-        doc.circle(x + 6, y + 6, 5.5, 'F');
-        doc.setTextColor(255, 255, 255);
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(8.5);
-        doc.text('J', x + 6, y + 9, { align: 'center' });
-      };
+      const indexFr = (value) =>
+        value === null || value === undefined || value === ''
+          ? '—'
+          : espacesVisibles(Number(value).toLocaleString('fr-FR'));
 
-      const drawSectionTitle = (title, x, sectionY, width = contentWidth) => {
-        doc.setFillColor(...BLUE);
-        doc.roundedRect(x, sectionY, width, 6, 1.2, 1.2, 'F');
-        doc.setTextColor(255, 255, 255);
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(7.2);
-        doc.text(title, x + 3, sectionY + 4.1);
+      const loadLogoDataUrl = async () => {
+        try {
+          const response = await fetch(`${import.meta.env.BASE_URL}images/Jirama.png`);
+          if (!response.ok) return null;
+
+          const blob = await response.blob();
+          return await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null);
+            reader.onerror = () => resolve(null);
+            reader.readAsDataURL(blob);
+          });
+        } catch (logoError) {
+          console.warn('Logo JIRAMA indisponible pour la facture :', logoError);
+          return null;
+        }
       };
 
       /* =====================================================
          EN-TÊTE STYLE FACTURE JIRAMA
       ===================================================== */
-      drawLogo(margin, 8);
-
-      doc.setTextColor(...BLUE);
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(15);
-      doc.text('JIRAMA', margin + 13, 14);
+      const logoDataUrl = await loadLogoDataUrl();
+      if (logoDataUrl) {
+        doc.addImage(logoDataUrl, 'PNG', margin, 1.5, 28, 20.5);
+      } else {
+        doc.setTextColor(...BLUE);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(12);
+        doc.text('JIRAMA', margin, 12);
+      }
 
       doc.setTextColor(...ORANGE);
       doc.setFontSize(13.5);
-      doc.text('JIRO SY RANO MALAGASY', pageWidth / 2 + 8, 13.5, { align: 'center' });
+      doc.text('JIRO SY RANO MALAGASY', pageWidth / 2 + 8, 11.5, { align: 'center' });
 
       doc.setTextColor(...GRAY);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(5.7);
-      doc.text('Jiro sy Rano Malagasy — Document de suivi des consommations', pageWidth / 2 + 8, 18, {
-        align: 'center',
-      });
-      doc.text('NIF / Statistique / RCS : informations de référence du projet', pageWidth / 2 + 8, 22, {
+      doc.text('Facture détaillée d’eau et d’électricité', pageWidth / 2 + 8, 16, {
         align: 'center',
       });
 
       doc.setDrawColor(...BLUE);
       doc.setLineWidth(0.45);
-      doc.line(margin, 26, pageWidth - margin, 26);
+      doc.line(margin, 24, pageWidth - margin, 24);
 
       /* =====================================================
-         BLOC FACTURE
+         BLOC « VOTRE FACTURE MOIS DE » + NUMÉRO
       ===================================================== */
       doc.setFillColor(...LIGHT_ORANGE);
-      doc.roundedRect(margin, 29, contentWidth, 10, 1.5, 1.5, 'F');
+      doc.roundedRect(margin, 27, contentWidth, 9, 1.5, 1.5, 'F');
 
       doc.setTextColor(...DARK);
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8.3);
-      doc.text(`Votre facture mois de : ${moisFacture}`, margin + 3, 35.2);
+      doc.text(`Votre facture mois de : ${moisFacture}`, margin + 3, 32.8);
 
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.8);
-      doc.text(`N° : ${factureNumero}`, pageWidth - margin - 3, 35.2, { align: 'right' });
+      doc.setFontSize(7.6);
+      doc.text(`Numéro : ${factureNumero}`, pageWidth - margin - 3, 32.8, { align: 'right' });
 
-      let y = 42;
+      let y = 38.5;
 
       /* =====================================================
-         INFORMATIONS FACTURE / CLIENT
+         INFORMATIONS ABONNÉ
       ===================================================== */
       const infoRows = [
         ['Titulaire du compte', nomAbonne, 'Adresse installation', adresse],
-        ['Référence client', abonnement, 'Catégorie', 'Particulier'],
-        ['Référence encaissement', safeText(releve.reference_encaissement, factureNumero), 'Agence', 'Antsirabe'],
-        ['Date d’édition', formatDate(dateReleve), 'Date limite de paiement', '—'],
-        ['N° compteur électricité', elec?.numero_compteur || '—', 'N° compteur eau', eau?.numero_compteur || '—'],
-      ];
-
-      autoTable(doc, {
-        startY: y,
-        theme: 'grid',
-        margin: { left: margin, right: margin },
-        tableWidth: contentWidth,
-        pageBreak: 'avoid',
-        styles: {
-          font: 'helvetica',
-          fontSize: 5.8,
-          textColor: DARK,
-          cellPadding: 1.05,
-          lineColor: BORDER,
-          lineWidth: 0.2,
-          valign: 'middle',
-          overflow: 'linebreak',
-          minCellHeight: 5,
-        },
-        columnStyles: {
-          0: { fontStyle: 'bold', fillColor: LIGHT_GRAY, cellWidth: 31 },
-          1: { cellWidth: 57 },
-          2: { fontStyle: 'bold', fillColor: LIGHT_GRAY, cellWidth: 31 },
-          3: { cellWidth: 69 },
-        },
-        body: infoRows,
-      });
-
-      y = doc.lastAutoTable.finalY + 2.5;
-
-      /* =====================================================
-         RELEVÉS ÉLECTRICITÉ / EAU
-      ===================================================== */
-      drawSectionTitle('RELEVÉS ET CONSOMMATIONS', margin, y);
-      y += 6.8;
-
-      const indexRows = [
-        [
-          'Nouvel index',
-          elec ? Number(elec.nouvel_index).toLocaleString('fr-FR') : '—',
-          elec ? formatDate(elec.date_releve) : '—',
-          'Nouvel index',
-          eau ? Number(eau.nouvel_index).toLocaleString('fr-FR') : '—',
-          eau ? formatDate(eau.date_releve) : '—',
-        ],
-        [
-          'Ancien index',
-          elec ? Number(elec.ancien_index).toLocaleString('fr-FR') : '—',
-          elec?.date_ancien_releve ? formatDate(elec.date_ancien_releve) : '—',
-          'Ancien index',
-          eau ? Number(eau.ancien_index).toLocaleString('fr-FR') : '—',
-          eau?.date_ancien_releve ? formatDate(eau.date_ancien_releve) : '—',
-        ],
-        [
-          'Consommation totale',
-          elec ? `${formatAmount(elec.consommation)} kWh` : '—',
-          '',
-          'Consommation totale',
-          eau ? `${formatAmount(eau.consommation)} m³` : '—',
-          '',
-        ],
-        [
-          'Nombre de jours',
-          elec?.nombre_jours ?? '—',
-          '',
-          'Nombre de jours',
-          eau?.nombre_jours ?? '—',
-          '',
-        ],
+        ['Référence client', abonnement, 'Catégorie', safeText(releve.categorie || releve.categorie_abonne)],
+        ['Référence encaissement', safeText(releve.reference_encaissement), 'Commune', safeText(releve.commune)],
+        ['N° compteur électricité', elec?.numero_compteur || '—', 'Tarif électricité', elec ? FACTURATION_TEMPORAIRE.ELECTRICITE.tarif : '—'],
+        ['N° compteur eau', eau?.numero_compteur || '—', 'Tarif eau', eau ? FACTURATION_TEMPORAIRE.EAU.tarif : '—'],
       ];
 
       autoTable(doc, {
@@ -1812,59 +1984,60 @@ function RelevesPage() {
           lineColor: BORDER,
           lineWidth: 0.2,
           valign: 'middle',
-        },
-        headStyles: {
-          fillColor: BLUE,
-          textColor: 255,
-          fontStyle: 'bold',
-          fontSize: 6,
-          halign: 'center',
+          overflow: 'linebreak',
+          minCellHeight: 4.6,
         },
         columnStyles: {
-          0: { fontStyle: 'bold', cellWidth: 31 },
-          1: { cellWidth: 29, halign: 'center' },
-          2: { cellWidth: 28, halign: 'center' },
-          3: { fontStyle: 'bold', cellWidth: 31 },
-          4: { cellWidth: 29, halign: 'center' },
-          5: { cellWidth: 28, halign: 'center' },
+          0: { fontStyle: 'bold', fillColor: LIGHT_BLUE, cellWidth: 33 },
+          1: { cellWidth: 56 },
+          2: { fontStyle: 'bold', fillColor: LIGHT_BLUE, cellWidth: 33 },
+          3: { cellWidth: 68 },
         },
-        head: [['ÉLECTRICITÉ', 'Index', 'Date', 'EAU', 'Index', 'Date']],
-        body: indexRows,
+        body: infoRows,
       });
 
       y = doc.lastAutoTable.finalY + 2.5;
 
       /* =====================================================
-         FACTURATION — MÊMES CALCULS / DONNÉES EXISTANTS
+         VOTRE FACTURE EN DÉTAIL (index eau + électricité)
       ===================================================== */
-      drawSectionTitle('DÉTAIL DE LA FACTURATION', margin, y);
-      y += 6.8;
-
-      const elecConso = Number(elec?.consommation || 0);
-      const eauConso = Number(eau?.consommation || 0);
-      const elecUnit = 340;
-      const eauUnit = 415;
-      const elecMontantConso = elecConso * elecUnit;
-      const eauMontantConso = eauConso * eauUnit;
-
-      const billingRows = [
-        ['1ère tranche de consommation', elec ? formatAmount(elecConso) : '—', '340.00', elec ? formatAmount(elecMontantConso) : '—', eau ? formatAmount(eauConso) : '—', '415.00', eau ? formatAmount(eauMontantConso) : '—'],
-        ['2ème tranche de consommation', '', '560.00', '', '', '', ''],
-        ['3ème tranche de consommation', '', '', '', '', '', ''],
-        ['4ème tranche de consommation', '', '', '', '', '', ''],
-        ['Redevance JIRAMA', '', '', '8 000.00', '', '', ''],
-        ['Prime fixe JIRAMA', '', '3 018.00', '3 018.00', '', '', '3 770.00'],
-        ['Autres frais', '', '', '6 639.60', '', '', ''],
-        ['SOUS TOTAL JIRAMA (1)', '', '', formatAmount(FACTURATION_TEMPORAIRE.sousTotalElectricite), '', '', formatAmount(FACTURATION_TEMPORAIRE.sousTotalEau)],
-        ['Taxe communale', '', '', formatAmount(FACTURATION_TEMPORAIRE.taxeCommunaleElectricite), '', '', formatAmount(FACTURATION_TEMPORAIRE.taxeCommunaleEau)],
-        ['Surtaxe communale', '', '', formatAmount(FACTURATION_TEMPORAIRE.surtaxeCommunaleElectricite), '', '', formatAmount(FACTURATION_TEMPORAIRE.surtaxeCommunaleEau)],
-        ['Fonds national de l’énergie durable', '', '', formatAmount(FACTURATION_TEMPORAIRE.fondsEnergieElectricite), '', '', formatAmount(FACTURATION_TEMPORAIRE.fondsEnergieEau)],
-        ['Redevance assainissement eaux usées', '', '', '0.00', '', '', '0.00'],
-        ['Sous total Taxes et Redevances (2)', '', '', '1 697.28', '', '', '105.83'],
-        ['Montant TVA de la facture', '', '', formatAmount(FACTURATION_TEMPORAIRE.tvaElectricite), '', '', formatAmount(FACTURATION_TEMPORAIRE.tvaEau)],
-        ['TOTAL (3) = (1) + (2) + TVA', '', '', formatAmount(FACTURATION_TEMPORAIRE.totalElectricite), '', '', formatAmount(FACTURATION_TEMPORAIRE.totalEau)],
-        ['Déduction sur facture estimée antérieure (4)', '', '', '0.00', '', '', '0.00'],
-        ['MONTANT ELEC/EAU : (3) - (4)', '', '', formatAmount(FACTURATION_TEMPORAIRE.totalElectricite), '', '', formatAmount(FACTURATION_TEMPORAIRE.totalEau)],
+      const detailRows = [
+        [
+          `Date d'édition : ${formatDate(getToday())}`,
+          'Nouvel index',
+          elec ? formatDate(elec.date_releve) : '—',
+          elec ? indexFr(elec.nouvel_index) : '—',
+          'Nouvel index',
+          eau ? formatDate(eau.date_releve) : '—',
+          eau ? indexFr(eau.nouvel_index) : '—',
+        ],
+        [
+          'Date de présentation : —',
+          'Ancien index',
+          elec?.date_ancien_releve ? formatDate(elec.date_ancien_releve) : '—',
+          elec ? indexFr(elec.ancien_index) : '—',
+          'Ancien index',
+          eau?.date_ancien_releve ? formatDate(eau.date_ancien_releve) : '—',
+          eau ? indexFr(eau.ancien_index) : '—',
+        ],
+        [
+          `Date limite de paiement : ${releve.date_limite_paiement ? formatDate(releve.date_limite_paiement) : '—'}`,
+          'Consommation totale',
+          '',
+          elec ? formatAmount(elec.consommation) : '—',
+          'Consommation totale',
+          '',
+          eau ? formatAmount(eau.consommation) : '—',
+        ],
+        [
+          `Agence : ${safeText(releve.agence || releve.nom_agence)}`,
+          'Nombre de jours de consommation',
+          '',
+          elec?.nombre_jours ?? '—',
+          'Nombre de jours de consommation',
+          '',
+          eau?.nombre_jours ?? '—',
+        ],
       ];
 
       autoTable(doc, {
@@ -1875,39 +2048,98 @@ function RelevesPage() {
         pageBreak: 'avoid',
         styles: {
           font: 'helvetica',
-          fontSize: 4.85,
+          fontSize: 5.4,
           textColor: DARK,
-          cellPadding: 0.72,
-          lineColor: [185, 185, 185],
+          cellPadding: 0.85,
+          lineColor: BORDER,
+          lineWidth: 0.2,
+          valign: 'middle',
+          overflow: 'linebreak',
+          minCellHeight: 4.2,
+        },
+        headStyles: {
+          fillColor: BLUE,
+          textColor: 255,
+          fontStyle: 'bold',
+          fontSize: 5.8,
+          halign: 'center',
+        },
+        columnStyles: {
+          0: { cellWidth: 60, fontStyle: 'bold', fillColor: LIGHT_BLUE },
+          1: { cellWidth: 33 },
+          2: { cellWidth: 17, halign: 'center' },
+          3: { cellWidth: 15, halign: 'right' },
+          4: { cellWidth: 33 },
+          5: { cellWidth: 17, halign: 'center' },
+          6: { cellWidth: 15, halign: 'right' },
+        },
+        head: [[
+          'VOTRE FACTURE EN DETAIL',
+          elec ? 'ELECTRICITE' : 'ELECTRICITE (non concerné)',
+          'Date',
+          'Index',
+          eau ? 'EAU' : 'EAU (non concerné)',
+          'Date',
+          'Index',
+        ]],
+        body: detailRows,
+      });
+
+      y = doc.lastAutoTable.finalY + 2.5;
+
+      /* =====================================================
+         CONSOMMATION / REDÉVANCES / SOUS TOTAL JIRAMA (1)
+      ===================================================== */
+      const tranchesRows = [
+        ['1ère tranche de consommation', elec ? formatAmount(elecConso) : '—', elec ? formatAmount(elecUnit) : '—', fmtServiceAmount(elec, elecMontantConso), eau ? formatAmount(eauConso) : '—', eau ? formatAmount(eauUnit) : '—', fmtServiceAmount(eau, eauMontantConso)],
+        ['2ème tranche de consommation', '', elec ? '560.00' : '—', '', '', '', ''],
+        ['3ème tranche de consommation', '', '', '', '', '', ''],
+        ['4ème tranche de consommation', '', '', '', '', '', ''],
+        ['Redevance JIRAMA', '', '', fmtServiceAmount(elec, 8000), '', '', '—'],
+        ['P-line fixe JIRAMA', '', '', fmtServiceAmount(elec, FACTURATION_TEMPORAIRE.redevanceJiramaElectricite), '', '', fmtServiceAmount(eau, FACTURATION_TEMPORAIRE.redevanceJiramaEau)],
+        ['AUTRES FRAIS', '', '', fmtServiceAmount(elec, 6639.60), '', '', '—'],
+        ['SOUS TOTAL JIRAMA (1)', '', '', fmtServiceAmount(elec, FACTURATION_TEMPORAIRE.sousTotalElectricite), '', '', fmtServiceAmount(eau, FACTURATION_TEMPORAIRE.sousTotalEau)],
+      ];
+
+      autoTable(doc, {
+        startY: y,
+        theme: 'grid',
+        margin: { left: margin, right: margin },
+        tableWidth: contentWidth,
+        pageBreak: 'avoid',
+        styles: {
+          font: 'helvetica',
+          fontSize: 5.2,
+          textColor: DARK,
+          cellPadding: 0.75,
+          lineColor: BORDER,
           lineWidth: 0.18,
           valign: 'middle',
           overflow: 'linebreak',
-          minCellHeight: 3.7,
+          minCellHeight: 3.8,
         },
         headStyles: {
           fillColor: BLUE,
           textColor: 255,
           fontStyle: 'bold',
           halign: 'center',
-          fontSize: 4.9,
+          fontSize: 5.3,
         },
         columnStyles: {
-          0: { cellWidth: 61, fontStyle: 'bold' },
-          1: { cellWidth: 21, halign: 'right' },
-          2: { cellWidth: 21, halign: 'right' },
-          3: { cellWidth: 23, halign: 'right' },
-          4: { cellWidth: 18, halign: 'right' },
-          5: { cellWidth: 21, halign: 'right' },
+          0: { cellWidth: 62, fontStyle: 'bold' },
+          1: { cellWidth: 22, halign: 'right' },
+          2: { cellWidth: 22, halign: 'right' },
+          3: { cellWidth: 24, halign: 'right' },
+          4: { cellWidth: 17, halign: 'right' },
+          5: { cellWidth: 20, halign: 'right' },
           6: { cellWidth: 23, halign: 'right' },
         },
-        head: [['Désignation', 'Qté Elec', 'PU', 'Montant Elec', 'Qté Eau', 'PU', 'Montant Eau']],
-        body: billingRows,
+        head: [['DÉSIGNATION', 'Quantité (kWh)', 'Prix unitaire (Ar)', 'Montant (Ar)', 'Quantité (m³)', 'Prix unitaire (Ar)', 'Montant (Ar)']],
+        body: tranchesRows,
         didParseCell: (data) => {
-          if ([7, 12, 14, 16].includes(data.row.index)) {
+          if (data.row.index === 7 && data.column.index === 0) {
             data.cell.styles.fontStyle = 'bold';
-          }
-          if ([14, 16].includes(data.row.index)) {
-            data.cell.styles.fillColor = data.column.index === 0 ? LIGHT_BLUE : [250, 250, 250];
+            data.cell.styles.fillColor = LIGHT_ORANGE;
           }
         },
       });
@@ -1915,7 +2147,69 @@ function RelevesPage() {
       y = doc.lastAutoTable.finalY + 2.5;
 
       /* =====================================================
-         MONTANTS À PAYER
+         TAXES / TVA / TOTAL (2) (3) (4)
+      ===================================================== */
+      const taxesRows = [
+        ['Taxe communale', '', '', fmtServiceAmount(elec, FACTURATION_TEMPORAIRE.taxeCommunaleElectricite), '', '', fmtServiceAmount(eau, FACTURATION_TEMPORAIRE.taxeCommunaleEau)],
+        ['Surtaxe communale', '', '', fmtServiceAmount(elec, FACTURATION_TEMPORAIRE.surtaxeCommunaleElectricite), '', '', fmtServiceAmount(eau, FACTURATION_TEMPORAIRE.surtaxeCommunaleEau)],
+        ['Fonds national de l’énergie durable', '', '', fmtServiceAmount(elec, FACTURATION_TEMPORAIRE.fondsEnergieElectricite), '', '', fmtServiceAmount(eau, FACTURATION_TEMPORAIRE.fondsEnergieEau)],
+        ['Redevance assainissement eaux usées', '', '', fmtServiceAmount(elec, 0), '', '', fmtServiceAmount(eau, 0)],
+        ['SOUS total Taxes et Redevances (2)', '', '', fmtServiceAmount(elec, 1697.28), '', '', fmtServiceAmount(eau, 105.83)],
+        ['Montant TVA de la facture', '', '', fmtServiceAmount(elec, FACTURATION_TEMPORAIRE.tvaElectricite), '', '', fmtServiceAmount(eau, FACTURATION_TEMPORAIRE.tvaEau)],
+        ['TOTAL (3) = (1) + (2) + TVA', '', '', fmtServiceAmount(elec, FACTURATION_TEMPORAIRE.totalElectricite), '', '', fmtServiceAmount(eau, FACTURATION_TEMPORAIRE.totalEau)],
+        ['Déduction sur facture estimée antérieure (4)', '', '', fmtServiceAmount(elec, 0), '', '', fmtServiceAmount(eau, 0)],
+        ['MONTANT ELEC/EAU : (3) - (4)', '', '', fmtServiceAmount(elec, FACTURATION_TEMPORAIRE.totalElectricite), '', '', fmtServiceAmount(eau, FACTURATION_TEMPORAIRE.totalEau)],
+      ];
+
+      autoTable(doc, {
+        startY: y,
+        theme: 'grid',
+        margin: { left: margin, right: margin },
+        tableWidth: contentWidth,
+        pageBreak: 'avoid',
+        styles: {
+          font: 'helvetica',
+          fontSize: 5.2,
+          textColor: DARK,
+          cellPadding: 0.75,
+          lineColor: BORDER,
+          lineWidth: 0.18,
+          valign: 'middle',
+          overflow: 'linebreak',
+          minCellHeight: 3.8,
+        },
+        headStyles: {
+          fillColor: BLUE,
+          textColor: 255,
+          fontStyle: 'bold',
+          halign: 'center',
+          fontSize: 5.3,
+        },
+        columnStyles: {
+          0: { cellWidth: 62, fontStyle: 'bold' },
+          1: { cellWidth: 22, halign: 'right' },
+          2: { cellWidth: 22, halign: 'right' },
+          3: { cellWidth: 24, halign: 'right' },
+          4: { cellWidth: 17, halign: 'right' },
+          5: { cellWidth: 20, halign: 'right' },
+          6: { cellWidth: 23, halign: 'right' },
+        },
+        head: [['DÉSIGNATION', 'Quantité (kWh)', 'Prix unitaire (Ar)', 'Montant (Ar)', 'Quantité (m³)', 'Prix unitaire (Ar)', 'Montant (Ar)']],
+        body: taxesRows,
+        didParseCell: (data) => {
+          if ([4, 6, 8].includes(data.row.index)) {
+            data.cell.styles.fontStyle = 'bold';
+          }
+          if ([6, 8].includes(data.row.index)) {
+            data.cell.styles.fillColor = data.column.index === 0 ? LIGHT_ORANGE : [253, 250, 246];
+          }
+        },
+      });
+
+      y = doc.lastAutoTable.finalY + 2.5;
+
+      /* =====================================================
+         MONTANT FACTURE (5) / DÉJÀ PAYÉ (6) / NET À PAYER
       ===================================================== */
       autoTable(doc, {
         startY: y,
@@ -1925,52 +2219,83 @@ function RelevesPage() {
         pageBreak: 'avoid',
         styles: {
           font: 'helvetica',
-          fontSize: 6.5,
+          fontSize: 6.3,
           textColor: DARK,
-          cellPadding: 1.7,
+          cellPadding: 1.4,
           valign: 'middle',
         },
-        body: [[
-          'MONTANT FACTURE (5)',
-          `${formatAmount(FACTURATION_TEMPORAIRE.montantAPayer)} Ar`,
-          'NET À PAYER (5) - (6)',
-          `${formatAmount(FACTURATION_TEMPORAIRE.netAPayer)} Ar`,
-        ]],
+        body: [
+          [
+            'MONTANT FACTURE (5)',
+            `${formatAmount(montantFacture)} Ar`,
+            'MONTANT DEJA PAYE (6)',
+            paiementDisponible
+              ? `${formatAmount(montantDejaPaye)} Ar${nombrePaiements ? ` — ${nombrePaiements} versement(s)` : ''}`
+              : 'Donnée indisponible',
+          ],
+          [
+            'NET A PAYER (5) - (6)',
+            paiementDisponible ? `${formatAmount(netAPayer)} Ar` : 'Calcul impossible sans donnée de paiement',
+            'STATUT DE PAIEMENT',
+            statutPaiement,
+          ],
+        ],
         columnStyles: {
-          0: { fontStyle: 'bold', fillColor: LIGHT_BLUE, cellWidth: 48 },
-          1: { fontStyle: 'bold', halign: 'right', fillColor: LIGHT_BLUE, cellWidth: 42 },
-          2: { fontStyle: 'bold', fillColor: LIGHT_ORANGE, cellWidth: 48 },
-          3: { fontStyle: 'bold', halign: 'right', fillColor: LIGHT_ORANGE, cellWidth: 42 },
+          0: { fontStyle: 'bold', fillColor: LIGHT_BLUE, cellWidth: 40 },
+          1: { fontStyle: 'bold', halign: 'right', fillColor: LIGHT_BLUE, cellWidth: 53 },
+          2: { fontStyle: 'bold', fillColor: LIGHT_ORANGE, cellWidth: 40 },
+          3: { fontStyle: 'bold', halign: 'right', fillColor: LIGHT_ORANGE, cellWidth: 57 },
         },
       });
 
-      y = doc.lastAutoTable.finalY + 2.5;
+      y = doc.lastAutoTable.finalY + 1.5;
+
+      if (paiementDisponible) {
+        doc.setTextColor(...BLUE);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(5.6);
+        doc.text(montantEnLettres(netAPayer), pageWidth / 2, y + 1.5, {
+          align: 'center',
+          maxWidth: contentWidth,
+        });
+        y += 4;
+      }
 
       /* =====================================================
-         HISTORIQUE
+         HISTORIQUE DES CONSOMMATIONS (3 DERNIÈRES PÉRIODES)
       ===================================================== */
       doc.setTextColor(...DARK);
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(6.7);
-      doc.text('Historique des consommations des 3 derniers relevés', margin, y);
-      y += 1.5;
+      doc.setFontSize(6.5);
+      doc.text('Historique des consommations des 3 dernières factures', margin, y + 2);
 
-      const historique = releves
-        .filter(
-          (item) => String(item.numero_abonne || '') === String(releve.numero_abonne || '')
-        )
-        .sort((a, b) => new Date(b.date_releve) - new Date(a.date_releve))
+      const periodesHistorique = new Map();
+      releves
+        .filter((item) => isSameAbonne(item))
+        .forEach((item) => {
+          const cle = toInputDate(item.date_releve).slice(0, 7);
+          const ligne = periodesHistorique.get(cle) || { periode: cle };
+          const type = normalizeTypeCompteur(item.type_compteur || item.type);
+
+          if (type === 'ELECTRICITE') ligne.elec = item.consommation;
+          if (type === 'EAU') ligne.eau = item.consommation;
+
+          periodesHistorique.set(cle, ligne);
+        });
+
+      const historique = [...periodesHistorique.values()]
+        .sort((a, b) => b.periode.localeCompare(a.periode))
         .slice(0, 3);
 
       autoTable(doc, {
-        startY: y + 1.5,
+        startY: y + 3.5,
         theme: 'grid',
         margin: { left: margin, right: margin },
         tableWidth: contentWidth,
         pageBreak: 'avoid',
         styles: {
           font: 'helvetica',
-          fontSize: 5.5,
+          fontSize: 5.4,
           cellPadding: 0.8,
           halign: 'center',
           textColor: DARK,
@@ -1984,9 +2309,9 @@ function RelevesPage() {
         head: [['Période', 'Cons. élec. (kWh)', 'Cons. eau (m³)']],
         body: historique.length
           ? historique.map((item) => [
-              formatDate(item.date_releve),
-              item.type_compteur === 'ELECTRICITE' ? formatAmount(item.consommation) : '—',
-              item.type_compteur === 'EAU' ? formatAmount(item.consommation) : '—',
+              item.periode,
+              item.elec !== undefined ? formatAmount(item.elec) : '—',
+              item.eau !== undefined ? formatAmount(item.eau) : '—',
             ])
           : [['Aucun historique', '—', '—']],
       });
@@ -1994,23 +2319,119 @@ function RelevesPage() {
       y = doc.lastAutoTable.finalY + 2;
 
       /* =====================================================
-         NOTE COURTE — CONSERVE L'INFORMATION EXISTANTE
+         AVERTISSEMENT + MENTION PROJET
       ===================================================== */
       doc.setFillColor(255, 248, 230);
-      doc.roundedRect(margin, y, contentWidth, 10, 1.2, 1.2, 'F');
+      doc.roundedRect(margin, y, contentWidth, 10.5, 1.2, 1.2, 'F');
+
       doc.setTextColor(170, 100, 0);
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(5.2);
-      doc.text('APERÇU DE PROJET — NE CONSTITUE PAS UNE FACTURE OFFICIELLE', margin + 3, y + 3.6);
+      doc.text('Ry mpanjifa hajaina, / Cher client,', margin + 3, y + 3.4);
       doc.setFont('helvetica', 'normal');
       doc.setTextColor(105, 85, 55);
-      doc.text('Tarifs, prix unitaires, taxes, surtaxes, TVA et montants sont temporaires et doivent être validés.', margin + 3, y + 7.2);
+      doc.text(
+        'Nous vous informons que les fournitures seront suspendues et les compteurs seront déposés pour tout client n’ayant pas réglé ses factures avant la date limite mentionnée.',
+        margin + 3,
+        y + 6.6,
+        { maxWidth: contentWidth - 6 }
+      );
+      doc.setFontSize(4.6);
+      doc.text(
+        'Tarifs et taxes provisoires (aperçu projet) — ne constituent pas une facture officielle.',
+        margin + 3,
+        y + 9.6
+      );
+
+      y += 13;
 
       /* =====================================================
-         COUPON AUTO-RELEVÉ — TOUJOURS SUR LA MÊME PAGE
+         BANDEAU RÉCAPITULATIF + CODE-BARRES
       ===================================================== */
-      y += 12.5;
+      autoTable(doc, {
+        startY: y,
+        theme: 'grid',
+        margin: { left: margin, right: margin },
+        tableWidth: contentWidth,
+        pageBreak: 'avoid',
+        styles: {
+          font: 'helvetica',
+          fontSize: 5.4,
+          textColor: DARK,
+          cellPadding: 0.9,
+          lineColor: BORDER,
+          lineWidth: 0.2,
+          valign: 'middle',
+        },
+        columnStyles: {
+          0: { cellWidth: 58, fontStyle: 'bold', fillColor: LIGHT_BLUE },
+          1: { cellWidth: 64 },
+          2: { cellWidth: 68 },
+        },
+        body: [
+          [
+            `FACTURE N° ${factureNumero}`,
+            `NET A PAYER E et/ou W : ${paiementDisponible ? `${formatAmount(netAPayer)} Ar` : '—'}`,
+            `Mois de : ${moisFacture}`,
+          ],
+          [
+            `Référence client : ${abonnement}`,
+            `Nom Client : ${nomAbonne}`,
+            `Catégorie : ${safeText(releve.categorie || releve.categorie_abonne)}`,
+          ],
+        ],
+      });
 
+      y = doc.lastAutoTable.finalY + 1;
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(5.2);
+      const couponColumnWidth = pageWidth / 2 - margin - 6;
+      const couponReferenceLines = doc.splitTextToSize(
+        `Laharan'ny mpanjifa (Réf client) : ${abonnement}`,
+        couponColumnWidth
+      );
+      const couponAddressLines = doc.splitTextToSize(
+        `Adresy (Adresse) : ${adresse}`,
+        couponColumnWidth
+      );
+      const couponFirstRowHeight =
+        Math.max(couponReferenceLines.length, couponAddressLines.length) * 3.2;
+
+      // Garder le code-barres et le coupon ensemble, avec une marge pour le pied de page.
+      if (y + 35 + couponFirstRowHeight > pageHeight - margin - 11) {
+        doc.addPage();
+        y = margin;
+        doc.setTextColor(...BLUE);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7);
+        doc.text(`Coupon de relevé — ${factureNumero}`, margin, y + 4);
+        y += 7;
+      }
+
+      // Code-barres visuel (aucune librairie externe).
+      let barcodeX = pageWidth - margin - 55;
+      const barcodeY = y + 1;
+
+      for (let i = 0; i < 36; i += 1) {
+        const barWidth = i % 5 === 0 ? 1.15 : i % 2 === 0 ? 0.7 : 0.4;
+        const barHeight = i % 3 === 0 ? 8 : 6;
+
+        doc.setFillColor(30, 30, 30);
+        doc.rect(barcodeX, barcodeY, barWidth, barHeight, 'F');
+        barcodeX += barWidth + 0.75;
+      }
+
+      doc.setTextColor(...GRAY);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(4.6);
+      doc.text(factureNumero, pageWidth - margin, barcodeY + 11, { align: 'right' });
+
+      y += 13;
+
+      /* =====================================================
+         COUPON AUTO-RELEVÉ
+      ===================================================== */
       doc.setDrawColor(130, 130, 130);
       doc.setLineWidth(0.25);
       doc.setLineDashPattern([1.5, 1.5], 0);
@@ -2019,68 +2440,52 @@ function RelevesPage() {
 
       doc.setTextColor(...BLUE);
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(6.8);
-      doc.text('COUPON AUTO-RELEVÉ', pageWidth / 2, y + 5, { align: 'center' });
+      doc.setFontSize(6.6);
+      doc.text(`Coupon AUTO-RELEVÉ numéro : ${factureNumero}`, pageWidth / 2, y + 4.5, {
+        align: 'center',
+      });
 
       doc.setTextColor(...GRAY);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(5.3);
-      doc.text(`Référence client : ${abonnement}`, margin + 3, y + 11);
-      doc.text(`Adresse : ${adresse}`, margin + 3, y + 15.5);
-      doc.text('Date du prochain relevé : ................................', margin + 3, y + 20);
-      doc.text('Index électricité : ................................', margin + 3, y + 24.5);
-      doc.text('Index eau : ................................', margin + 3, y + 29);
-      doc.text('Contact téléphonique : ................................', pageWidth / 2 + 3, y + 20);
-      doc.text('Adresse e-mail : ................................', pageWidth / 2 + 3, y + 24.5);
+      doc.setFontSize(5.2);
+      const couponFirstRowY = y + 9.5;
+      doc.text(couponReferenceLines, margin + 3, couponFirstRowY);
+      doc.text(couponAddressLines, pageWidth / 2 + 3, couponFirstRowY);
+
+      const couponSecondRowY = couponFirstRowY + couponFirstRowHeight + 1;
+      const couponThirdRowY = couponSecondRowY + 4.5;
+      const couponFourthRowY = couponThirdRowY + 4.5;
+      doc.text('Période d’auto-relevé et remise : ................................', margin + 3, couponSecondRowY);
+      doc.text(`Date du relevé : ${formatDate(dateReleve)}`, pageWidth / 2 + 3, couponSecondRowY);
+      doc.text('Marika JIRO (Index ELEC) : ................................', margin + 3, couponThirdRowY);
+      doc.text('Marika RANO (Index EAU) : ................................', pageWidth / 2 + 3, couponThirdRowY);
+      doc.text('Contact téléphonique : ................................', margin + 3, couponFourthRowY);
+      doc.text('Adresse e-mail : ................................', pageWidth / 2 + 3, couponFourthRowY);
 
       /* =====================================================
-         CODE-BARRES VISUEL
-      ===================================================== */
-      let barcodeX = pageWidth - 63;
-      const barcodeY = y + 7;
-
-      for (let i = 0; i < 36; i += 1) {
-        const barWidth = i % 5 === 0 ? 1.15 : i % 2 === 0 ? 0.7 : 0.4;
-        const barHeight = i % 3 === 0 ? 11 : 8.5;
-
-        doc.setFillColor(30, 30, 30);
-        doc.rect(barcodeX, barcodeY, barWidth, barHeight, 'F');
-        barcodeX += barWidth + 0.75;
-      }
-
-      doc.setTextColor(...GRAY);
-      doc.setFontSize(4.7);
-      doc.text(factureNumero, pageWidth - 15, barcodeY + 14, { align: 'right' });
-
-      /* =====================================================
-         GARDE-FOU : UNE SEULE PAGE
-         Toutes les sections ont été compactées pour rester
-         dans la zone imprimable A4. Aucun addPage() n'est utilisé.
-      ===================================================== */
-      if (doc.internal.getNumberOfPages() !== 1) {
-        console.warn(
-          'Le contenu PDF a dépassé une page A4. Réduire les espacements avant production.'
-        );
-      }
-
-      /* =====================================================
-         PIED DE PAGE
+         PIED DE PAGE — TOUTES LES PAGES
       ===================================================== */
       const totalPages = doc.internal.getNumberOfPages();
-      doc.setPage(1);
 
-      doc.setDrawColor(200, 200, 200);
-      doc.setLineWidth(0.25);
-      doc.line(margin, pageHeight - 11, pageWidth - margin, pageHeight - 11);
+      for (let page = 1; page <= totalPages; page += 1) {
+        doc.setPage(page);
 
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(5.3);
-      doc.setTextColor(120, 120, 120);
-      doc.text('Document généré par l’application de suivi JIRAMA', margin, pageHeight - 5.5);
-      doc.text(`Page 1/${totalPages}`, pageWidth - margin, pageHeight - 5.5, { align: 'right' });
+        doc.setDrawColor(200, 200, 200);
+        doc.setLineWidth(0.25);
+        doc.line(margin, pageHeight - 11, pageWidth - margin, pageHeight - 11);
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(5.3);
+        doc.setTextColor(120, 120, 120);
+        doc.text('Document généré par l’application de suivi JIRAMA', margin, pageHeight - 5.5);
+        doc.text(`Page ${page}/${totalPages}`, pageWidth - margin, pageHeight - 5.5, { align: 'right' });
+      }
 
       /* =====================================================
          ENREGISTREMENT PDF
+         Générer plusieurs fois le même PDF ne crée ni
+         double facture ni double paiement : le numéro de
+         facture reste déterministe et l'API ne stocke rien.
       ===================================================== */
       const safeName = (releve.numero_abonne || releve.numero_compteur || 'releve')
         .toString()
@@ -2388,7 +2793,8 @@ function RelevesPage() {
   /* =========================================================
      VALEURS DE RENDU
   ========================================================== */
-  const peutEcrire = ['ADMINISTRATEUR', 'AGENT'].includes(currentUser.role);
+  const roleUtilisateur = String(currentUser.role || '').trim().toUpperCase();
+  const peutEcrire = ['AGENT', 'RESPONSABLE'].includes(roleUtilisateur);
   const premierChargement = loading && releves.length === 0;
   const aucunResultat = !loading && filteredReleves.length === 0;
   const listeVide = releves.length === 0;
@@ -2424,7 +2830,7 @@ function RelevesPage() {
       releve={releve}
       peutModifier={peutEcrire}
       peutSupprimer={
-        currentUser.role === 'ADMINISTRATEUR' && isDernierReleve(releve)
+        roleUtilisateur === 'ADMINISTRATEUR' && isDernierReleve(releve)
       }
       onPdf={generateRelevePDF}
       onEdit={openEditModal}
@@ -2436,28 +2842,9 @@ function RelevesPage() {
   /* =========================================================
      RENDER
   ========================================================== */
-  return (
-    <AdminShell
-      intensite="calme"
-      className="selection:bg-[var(--jr-elec)] selection:text-[var(--jr-sur-elec)]"
-    >
-      <Sidebar
-        isOpen={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-        activePath="/dashboard/admin/releves"
-        onNavigate={navigate}
-        onLogout={handleLogout}
-        user={currentUser}
-      />
-
-      <div className="lg:pl-72">
-        <Header
-          onOpenSidebar={() => setSidebarOpen(true)}
-          onProfile={() => navigate('/dashboard/admin')}
-          user={currentUser}
-        />
-
-        <main className="p-4 sm:p-6 lg:p-8">
+  const contenuPage = (
+    <>
+      <div className="selection:bg-[var(--jr-elec)] selection:text-[var(--jr-sur-elec)]">
           {/* =================================================
               TITRE
           ================================================= */}
@@ -2711,6 +3098,10 @@ function RelevesPage() {
                     {filteredReleves.map((releve, index) => {
                       const st = styleType(releve.type_compteur);
                       const unite = releve.unite || st.unite;
+                      const afficherNomAbonne = estDebutGroupeReleves(
+                        filteredReleves,
+                        index
+                      );
 
                       return (
                         <tr
@@ -2736,7 +3127,7 @@ function RelevesPage() {
                                 <p className="text-xs text-jr-faible">
                                   {st.libelle},{' '}
                                   {releve.date_installation
-                                    ? `installé le ${formatDate(releve.date_installation)}`
+                                    ? `installé le ${formatDateInstallation(releve.date_installation)}`
                                     : 'installation non renseignée'}
                                 </p>
                               </div>
@@ -2746,11 +3137,11 @@ function RelevesPage() {
                           {/* ABONNÉ */}
                           <td className="px-5 py-3.5">
                             <div className="flex items-center gap-3">
-                              <Initiales releve={releve} />
+                              {afficherNomAbonne && <Initiales releve={releve} />}
 
                               <div>
                                 <p className="text-sm font-medium text-jr-texte">
-                                  {nomAbonneDe(releve)}
+                                  {afficherNomAbonne ? nomAbonneDe(releve) : ''}
                                 </p>
                                 <p className="font-mono text-xs tabular-nums text-jr-faible">
                                   {releve.numero_abonne}
@@ -2837,6 +3228,10 @@ function RelevesPage() {
                 {filteredReleves.map((releve, index) => {
                   const st = styleType(releve.type_compteur);
                   const unite = releve.unite || st.unite;
+                  const afficherNomAbonne = estDebutGroupeReleves(
+                    filteredReleves,
+                    index
+                  );
 
                   return (
                     <li
@@ -2853,7 +3248,7 @@ function RelevesPage() {
                               {releve.numero_compteur}
                             </p>
                             <p className="truncate text-xs text-jr-faible">
-                              {nomAbonneDe(releve)}
+                              {afficherNomAbonne ? nomAbonneDe(releve) : ''}
                             </p>
                           </div>
                         </div>
@@ -2895,7 +3290,7 @@ function RelevesPage() {
                           <dt className="text-jr-faible">Installation</dt>
                           <dd className="mt-0.5 text-jr-texte">
                             {releve.date_installation
-                              ? formatDate(releve.date_installation)
+                              ? formatDateInstallation(releve.date_installation)
                               : 'Non renseignée'}
                           </dd>
                         </div>
@@ -2910,7 +3305,6 @@ function RelevesPage() {
               </ul>
             )}
           </section>
-        </main>
       </div>
 
       {/* =================================================
@@ -3136,8 +3530,9 @@ function RelevesPage() {
 
                     {isFirstReleve ? (
                       <p className="mt-1 text-xs font-medium text-jr-lien">
-                        Premier relevé : saisissez la date indiquée sur le
-                        relevé ou le document précédent.
+                        Premier relevé : saisissez la date du relevé
+                        d’installation vérifié. Cette initialisation est
+                        réservée au Responsable.
                       </p>
                     ) : (
                       <p className="mt-1 text-xs text-jr-faible">
@@ -3219,7 +3614,8 @@ function RelevesPage() {
 
                     {isFirstReleve ? (
                       <p className="mt-1 text-xs text-jr-lien">
-                        Premier relevé : saisissez l’ancien index.
+                        Premier relevé : saisissez l’ancien index indiqué sur
+                        le relevé d’installation vérifié.
                       </p>
                     ) : (
                       <p className="mt-1 text-xs text-jr-faible">
@@ -3450,6 +3846,37 @@ function RelevesPage() {
           </div>
         </div>
       )}
+      <CreationTransition active={transitionActive} />
+    </>
+  );
+
+  if (roleUtilisateur === 'RESPONSABLE') {
+    return (
+      <ResponsableLayout title="Relevés">
+        {contenuPage}
+      </ResponsableLayout>
+    );
+  }
+
+  return (
+    <AdminShell intensite="calme">
+      <Sidebar
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        activePath="/dashboard/agent/releves"
+        onNavigate={navigate}
+        onLogout={handleLogout}
+        user={currentUser}
+      />
+
+      <div className="lg:pl-72">
+        <Header
+          onOpenSidebar={() => setSidebarOpen(true)}
+          onProfile={() => navigate('/dashboard/agent')}
+          user={currentUser}
+        />
+        {contenuPage}
+      </div>
     </AdminShell>
   );
 }

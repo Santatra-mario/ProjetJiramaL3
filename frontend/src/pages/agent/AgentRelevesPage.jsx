@@ -7,17 +7,22 @@ import {
   CheckCircle2,
   ClipboardList,
   Droplets,
+  FileText,
   History,
   Info,
   Loader2,
+  Pencil,
   RefreshCw,
   Save,
+  TriangleAlert,
   X,
   Zap,
 } from 'lucide-react';
 
+import jsPDF from 'jspdf';
 import axiosClient from '../../api/axiosClient';
 import AgentLayout from '../../components/admin/agent/AgentLayout';
+import { ecouterChangementAbonnes } from '../../hooks/abonnesSync.js';
 
 /* ------------------------------------------------------------------ */
 /* Mouvement : un seul fil conducteur, « le relevé saisi passe du       */
@@ -66,25 +71,154 @@ const PREVIEW = {
   },
 };
 
+/* Indicateurs de disponibilité d'une date : vert, rouge, orange, gris. */
+const TONS_DATE = {
+  vert: {
+    puce: 'bg-emerald-500',
+    boite: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+  },
+  orange: {
+    puce: 'bg-amber-500',
+    boite: 'border-amber-200 bg-amber-50 text-amber-900',
+  },
+  jaune: {
+    puce: 'bg-yellow-500',
+    boite: 'border-yellow-300 bg-yellow-50 text-yellow-900',
+  },
+  rouge: {
+    puce: 'bg-red-500',
+    boite: 'border-red-200 bg-red-50 text-red-700',
+  },
+  neutre: {
+    puce: 'bg-slate-400',
+    boite: 'border-slate-200 bg-slate-50 text-slate-600',
+  },
+};
+
 const reducedMotion = () =>
   typeof window !== 'undefined' &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const isEau = (compteur) => String(compteur?.type || '').toUpperCase() === 'EAU';
+const FUSEAU_JIRAMA = (() => {
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Antananarivo' });
+    return 'Africa/Antananarivo';
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    return 'Indian/Antananarivo';
+  }
+})();
 
 function getToday() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
-    d.getDate()
-  ).padStart(2, '0')}`;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: FUSEAU_JIRAMA,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function getEndOfNextMonth() {
+  const [year, month] = getToday().split('-').map(Number);
+  const date = new Date(Date.UTC(year, month + 1, 0));
+  return [
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, '0'),
+    String(date.getUTCDate()).padStart(2, '0'),
+  ].join('-');
 }
 
 const toInputDate = (value) => (value ? String(value).slice(0, 10) : '');
 
+function isValidInputDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
+  if (!match) return false;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1) return false;
+
+  const nombreJours = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return day <= nombreJours;
+}
+
+const MOIS_FRANCAIS = [
+  'Janvier',
+  'Février',
+  'Mars',
+  'Avril',
+  'Mai',
+  'Juin',
+  'Juillet',
+  'Août',
+  'Septembre',
+  'Octobre',
+  'Novembre',
+  'Décembre',
+];
+
+/*
+  Une seule source d'affichage des dates : « 09 Novembre 2026 ».
+  Aucune conversion de fuseau : la date est découpée telle qu'elle est
+  stockée (YYYY-MM-DD), puis reconstruite en français.
+*/
+function formatDateLongue(value) {
+  const iso = toInputDate(value);
+  if (!isValidInputDate(iso)) return null;
+
+  const [year, month, day] = iso.split('-').map(Number);
+
+  return `${String(day).padStart(2, '0')} ${MOIS_FRANCAIS[month - 1]} ${year}`;
+}
+
 function formatDate(value) {
-  if (!value) return '—';
-  const date = new Date(`${String(value).slice(0, 10)}T00:00:00`);
-  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString('fr-FR');
+  return formatDateLongue(value) || '—';
+}
+
+function formatDateInstallation(value) {
+  if (!value) return 'Non renseignée';
+
+  return formatDateLongue(value) || 'Non renseignée';
+}
+
+/* Lendemain calendaire d'une date YYYY-MM-DD, sans conversion UTC locale. */
+function ajouterUnJour(value) {
+  const iso = toInputDate(value);
+  if (!isValidInputDate(iso)) return '';
+
+  const [year, month, day] = iso.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + 1));
+
+  return [
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, '0'),
+    String(date.getUTCDate()).padStart(2, '0'),
+  ].join('-');
+}
+
+function isMissionTerrainDate(mission) {
+  const date = toInputDate(mission?.date_prevue);
+  const debut = toInputDate(mission?.date_debut);
+  const fin = toInputDate(mission?.date_fin);
+  if (!isValidInputDate(date) || !isValidInputDate(debut) || !isValidInputDate(fin)) return false;
+  if (date < debut || date > fin) return false;
+
+  const offset = Math.round(
+    (Date.parse(`${date}T00:00:00Z`) - Date.parse(`${debut}T00:00:00Z`)) / 86400000
+  );
+  const jourDuCycle = offset % 3;
+  if (offset < 1 || jourDuCycle === 0) return false;
+
+  const jourFinalisation = offset - jourDuCycle + 2;
+  const dateFinalisationCycle = new Date(Date.parse(`${debut}T00:00:00Z`) + jourFinalisation * 86400000)
+    .toISOString()
+    .slice(0, 10);
+
+  return dateFinalisationCycle <= fin;
 }
 
 function formatNumber(value) {
@@ -106,12 +240,20 @@ function AgentRelevesPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const compteurQuery = searchParams.get('compteur') || '';
+  const missionQuery = searchParams.get('mission') || '';
 
   const [compteurs, setCompteurs] = useState([]);
   const [historique, setHistorique] = useState([]);
   const [selectedCompteur, setSelectedCompteur] = useState(compteurQuery);
   const [loading, setLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [mission, setMission] = useState(null);
+  const [abonnesRevision, setAbonnesRevision] = useState(0);
+  const [missionLoading, setMissionLoading] = useState(Boolean(missionQuery));
+  const [missionError, setMissionError] = useState('');
+  const [dateError, setDateError] = useState('');
+  const [dateVisiteError, setDateVisiteError] = useState('');
+  const [datePrecedenteError, setDatePrecedenteError] = useState('');
   // false tant que l'historique du compteur choisi n'est pas chargé : on ne
   // peut ni saisir ni confondre une erreur de chargement avec « premier relevé ».
   const [historyReady, setHistoryReady] = useState(false);
@@ -120,27 +262,189 @@ function AgentRelevesPage() {
   const [saved, setSaved] = useState(null);
   const [justSaved, setJustSaved] = useState(false);
   const [newReleveId, setNewReleveId] = useState(null);
+  const [editReleveId, setEditReleveId] = useState(null);
   const [rollKey, setRollKey] = useState(0);
   const [form, setForm] = useState({
     compteur_id: compteurQuery,
     date_ancien_releve: '',
     date_releve: getToday(),
+    date_visite_reelle: getToday(),
     ancien_index: '',
     nouvel_index: '',
+    observation: '',
   });
 
   const historyRef = useRef(null);
   const historyCardRef = useRef(null);
   const historyReq = useRef(0);
+  const datePrecedenteModifiee = useRef(false);
+
+  const dateReleveAutomatique = missionQuery
+    ? isMissionTerrainDate(mission)
+      ? toInputDate(mission.date_prevue)
+      : ''
+    : getToday();
+
+  // En mode correction, la date historique est conservée. Une mission
+  // utilise sa journée de descente planifiée, pas la date de clôture.
+  useEffect(() => {
+    if (editReleveId) return undefined;
+
+    const synchroniserDateDuJour = () => {
+      const dateDuJour = missionQuery ? dateReleveAutomatique : getToday();
+      setForm((previous) =>
+        previous.date_releve === dateDuJour
+          ? previous
+          : { ...previous, date_releve: dateDuJour }
+      );
+    };
+
+    synchroniserDateDuJour();
+    const intervalId = window.setInterval(synchroniserDateDuJour, 60 * 1000);
+    window.addEventListener('focus', synchroniserDateDuJour);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', synchroniserDateDuJour);
+    };
+  }, [editReleveId, missionQuery, dateReleveAutomatique]);
 
   const currentCompteur = useMemo(
     () => compteurs.find((item) => String(item.id) === String(selectedCompteur)) || null,
     [compteurs, selectedCompteur]
   );
+  const currentUserId = useMemo(() => {
+    try {
+      return Number(JSON.parse(localStorage.getItem('user') || '{}')?.id) || null;
+    } catch {
+      return null;
+    }
+  }, []);
 
   const isEauCompteur = isEau(currentCompteur);
   const isFirstReleve = historyReady && historique.length === 0;
+  const editingInitialReleve = Boolean(editReleveId && historique.some((item) => Number(item.id) === Number(editReleveId) && item.type_releve === 'INITIAL'));
+  const isInitialMode = isFirstReleve || editingInitialReleve;
   const unite = historique[0]?.unite || (isEauCompteur ? 'm³' : 'kWh');
+
+  const dateInstallationCompteur = toInputDate(currentCompteur?.date_installation);
+  const modeNouveauReleve = !editReleveId;
+  const missionDejaTraitee = Boolean(
+    mission && (mission.releve_id || String(mission.statut || '').toUpperCase() === 'TERMINEE')
+  );
+  const releveDeLaMission = mission?.releve_id
+    ? historique.find((item) => Number(item.id) === Number(mission.releve_id)) || null
+    : null;
+
+  // Dates réellement présentes dans l'historique du compteur sélectionné :
+  // aucune date d'un autre compteur ne doit apparaître ici.
+  const datesUtilisees = useMemo(
+    () => new Set(historique.map((item) => toInputDate(item.date_releve)).filter(Boolean)),
+    [historique]
+  );
+
+  const dernierReleve = historique[0] || null;
+  const relevePrecedent = historique[1] || null;
+  const releveModifie = editReleveId
+    ? historique.find((item) => Number(item.id) === Number(editReleveId))
+    : null;
+  const releveAvantSaisie = editReleveId && releveModifie
+    ? historique.find(
+        (item) =>
+          Number(item.id) !== Number(editReleveId) &&
+          toInputDate(item.date_releve) < toInputDate(releveModifie.date_releve)
+      ) || null
+    : dernierReleve;
+
+  /*
+    Prochaine date réellement acceptée par le backend :
+    strictement postérieure au dernier relevé, jamais antérieure à
+    l'installation du compteur, et au plus tard la fin du mois prochain.
+    Aucune date n'est inventée : si la fenêtre ne le permet pas, null.
+  */
+  const prochaineDatePossible = useMemo(() => {
+    if (!selectedCompteur || !historyReady) return null;
+
+    const finFenetre = getEndOfNextMonth();
+    let candidate = getToday();
+
+    if (dernierReleve) {
+      const jourSuivant = ajouterUnJour(dernierReleve.date_releve);
+      if (jourSuivant && jourSuivant > candidate) candidate = jourSuivant;
+    } else if (dateInstallationCompteur && dateInstallationCompteur > candidate) {
+      candidate = dateInstallationCompteur;
+    }
+
+    return candidate <= finFenetre ? candidate : null;
+  }, [selectedCompteur, historyReady, dernierReleve, dateInstallationCompteur]);
+
+  const dateReleveSaisie = editReleveId
+    ? toInputDate(form.date_releve)
+    : dateReleveAutomatique;
+  const datePrecedenteMax = toInputDate(releveAvantSaisie?.date_releve) || dateReleveSaisie;
+
+  const etatDateSaisie = useMemo(() => {
+    if (!modeNouveauReleve) {
+      return {
+        ton: 'neutre',
+        texte:
+          'Correction d’un relevé existant : les contrôles de disponibilité ci-dessous ne s’appliquent pas.',
+      };
+    }
+
+    if (!historyReady) {
+      return { ton: 'neutre', texte: 'Chargement de l’historique du compteur…' };
+    }
+
+    if (!dateReleveSaisie || !isValidInputDate(dateReleveSaisie)) {
+      return { ton: 'neutre', texte: 'Veuillez sélectionner une date de lecture valide.' };
+    }
+
+    if (dateInstallationCompteur && dateReleveSaisie < dateInstallationCompteur) {
+      return {
+        ton: 'rouge',
+        texte: `Date antérieure à l’installation du compteur (${formatDate(dateInstallationCompteur)}).`,
+      };
+    }
+
+    if (dernierReleve && dateReleveSaisie <= toInputDate(dernierReleve.date_releve)) {
+      return {
+        ton: 'jaune',
+        texte: prochaineDatePossible
+          ? `⚠ La date sélectionnée est antérieure au dernier relevé du ${formatDate(dernierReleve.date_releve)}. Choisissez le ${formatDate(prochaineDatePossible)} ou une date ultérieure autorisée.`
+          : `⚠ La date sélectionnée est antérieure au dernier relevé du ${formatDate(dernierReleve.date_releve)}. Aucune autre date n’est disponible dans la période autorisée.`,
+      };
+    }
+
+    if (datesUtilisees.has(dateReleveSaisie)) {
+      return {
+        ton: 'rouge',
+        texte:
+          'Cette date possède déjà un relevé enregistré pour ce compteur. Veuillez choisir une date autorisée.',
+      };
+    }
+
+    if (dateReleveSaisie > getEndOfNextMonth()) {
+      return {
+        ton: 'orange',
+        texte: `Date au-delà de la fenêtre autorisée (jusqu’au ${formatDate(getEndOfNextMonth())}).`,
+      };
+    }
+
+    return {
+      ton: 'vert',
+      texte:
+        'Cette date peut être utilisée pour effectuer un nouveau relevé, sous réserve de respecter les règles de saisie.',
+    };
+  }, [
+    modeNouveauReleve,
+    historyReady,
+    dateReleveSaisie,
+    dateInstallationCompteur,
+    datesUtilisees,
+    dernierReleve,
+    prochaineDatePossible,
+  ]);
 
   // Aperçu de la consommation : l'erreur de saisie se voit avant l'enregistrement.
   const hasIndexes = form.ancien_index !== '' && form.nouvel_index !== '';
@@ -170,13 +474,51 @@ function AgentRelevesPage() {
       const data = response.data?.data || [];
       setCompteurs(data);
 
-      if (selectedCompteur && data.some((item) => String(item.id) === String(selectedCompteur))) {
+      if (data.length === 0) {
+        if (compteurQuery) {
+          // Conserver l'identifiant demandé afin de ne pas afficher les
+          // informations d'un autre compteur lorsque celui-ci est absent,
+          // supprimé ou inaccessible à l'Agent.
+          setSelectedCompteur(String(compteurQuery));
+          setForm((previous) => ({ ...previous, compteur_id: String(compteurQuery) }));
+          setHistorique([]);
+          setHistoryReady(false);
+          setError(`Le compteur demandé (ID ${compteurQuery}) n’est pas disponible pour votre compte. Aucun autre compteur n’a été sélectionné.`);
+          return;
+        }
+
+        setSelectedCompteur('');
+        setHistorique([]);
+        setHistoryReady(false);
+        setSearchParams({});
         return;
       }
 
-      const first =
-        data.find((item) => String(item.id) === String(compteurQuery)) || data[0];
+      // Si l'URL ou l'état demande un compteur précis, ne jamais le remplacer
+      // silencieusement par le premier compteur de la liste : cela mélangerait
+      // potentiellement les données de deux abonnés différents.
+      const compteurDemande = String(compteurQuery || selectedCompteur || '').trim();
+      if (compteurDemande) {
+        const compteurExisteDansListe = data.some(
+          (item) => String(item.id) === compteurDemande
+        );
+        if (!compteurExisteDansListe) {
+          setSelectedCompteur(compteurDemande);
+          setForm((previous) => ({ ...previous, compteur_id: compteurDemande }));
+          setHistorique([]);
+          setHistoryReady(false);
+          setError(`Le compteur demandé (ID ${compteurDemande}) est introuvable ou n’est pas disponible pour votre compte. Aucun autre compteur n’a été sélectionné.`);
+          return;
+        }
 
+        setSelectedCompteur(compteurDemande);
+        setForm((previous) => ({ ...previous, compteur_id: compteurDemande }));
+        return;
+      }
+
+      // Aucun compteur n'est demandé dans l'URL : conserver le comportement
+      // existant en sélectionnant le premier compteur disponible.
+      const first = data[0];
       if (first) {
         setSelectedCompteur(String(first.id));
         setForm((previous) => ({ ...previous, compteur_id: String(first.id) }));
@@ -241,10 +583,13 @@ function AgentRelevesPage() {
       setForm((previous) => ({
         ...previous,
         compteur_id: String(compteurId),
-        date_ancien_releve: latest ? toInputDate(latest.date_releve) : '',
+        date_ancien_releve: datePrecedenteModifiee.current
+          ? previous.date_ancien_releve
+          : latest
+            ? toInputDate(latest.date_releve)
+            : '',
         ancien_index: latest?.nouvel_index ?? '',
         nouvel_index: '',
-        date_releve: getToday(),
       }));
 
       return data;
@@ -268,9 +613,57 @@ function AgentRelevesPage() {
     loadCompteurs();
   }, []);
 
+  useEffect(() => ecouterChangementAbonnes(() => {
+    setAbonnesRevision((revision) => revision + 1);
+    loadCompteurs();
+  }), []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!missionQuery) {
+      setMission(null);
+      setMissionError('');
+      setMissionLoading(false);
+      return undefined;
+    }
+    setMissionLoading(true);
+    axiosClient
+      .get(`/agent/missions/${missionQuery}`)
+      .then((response) => {
+        const nextMission = response.data?.data;
+        if (!nextMission?.id || cancelled) return;
+        setMission(nextMission);
+        setMissionError('');
+        setSelectedCompteur(String(nextMission.compteur_id));
+        setForm((previous) => ({
+          ...previous,
+          compteur_id: String(nextMission.compteur_id),
+          date_releve: isMissionTerrainDate(nextMission)
+            ? toInputDate(nextMission.date_prevue)
+            : '',
+          date_visite_reelle: toInputDate(nextMission.date_visite_reelle) || getToday(),
+        }));
+        setSearchParams({ mission: String(nextMission.id), compteur: String(nextMission.compteur_id) });
+      })
+      .catch((requestError) => {
+        if (cancelled) return;
+        setMission(null);
+        setMissionError(
+          requestError.response?.data?.message ||
+            'Cette mission ne vous est pas attribuée ou n’est plus disponible.'
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setMissionLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [missionQuery, setSearchParams, abonnesRevision]);
+
   useEffect(() => {
     loadHistory(selectedCompteur);
-  }, [selectedCompteur]);
+  }, [selectedCompteur, mission?.date_prevue]);
 
   // Nouvelle ligne : remonter la liste, puis retirer le marquage après 5 s.
   useEffect(() => {
@@ -289,12 +682,25 @@ function AgentRelevesPage() {
   /* ----------------------------- saisie ------------------------------- */
 
   function handleCompteurChange(event) {
+    if (missionQuery) return;
     const value = event.target.value;
 
+    datePrecedenteModifiee.current = false;
     setSelectedCompteur(value);
-    setForm((previous) => ({ ...previous, compteur_id: value }));
+    setHistoryReady(false);
+    setEditReleveId(null);
+    setForm((previous) => ({
+      ...previous,
+      compteur_id: value,
+      date_ancien_releve: '',
+      ancien_index: '',
+      nouvel_index: '',
+      observation: '',
+    }));
     setSearchParams(value ? { compteur: value } : {});
     setError('');
+    setDateError('');
+    setDatePrecedenteError('');
     setSaved(null);
     setJustSaved(false);
     setNewReleveId(null);
@@ -303,36 +709,111 @@ function AgentRelevesPage() {
 
   function handleChange(event) {
     const { name, value } = event.target;
+
+    if (name === 'date_releve') return;
     setForm((previous) => ({ ...previous, [name]: value }));
     setError('');
+    if (name === 'date_ancien_releve') datePrecedenteModifiee.current = true;
+    if (name === 'date_visite_reelle') setDateVisiteError('');
+    if (name === 'date_releve' || name === 'date_ancien_releve') {
+      setDateError('');
+      setDatePrecedenteError('');
+    }
     setSaved(null);
   }
 
-  function validateForm() {
-    if (!form.compteur_id) return 'Veuillez sélectionner un compteur.';
-    if (!form.date_releve) return 'Veuillez saisir la date du relevé actuel.';
+  function commencerCorrection(item) {
+    datePrecedenteModifiee.current = false;
+    setEditReleveId(item.id);
+    setForm({
+      compteur_id: String(item.compteur_id),
+      date_ancien_releve: toInputDate(item.date_ancien_releve),
+      ancien_index: item.ancien_index ?? '',
+      nouvel_index: item.nouvel_index ?? '',
+      date_releve: toInputDate(item.date_releve),
+      observation: item.observation ?? '',
+    });
+    setError('');
+    setDateError('');
+    setDatePrecedenteError('');
+    setSaved(null);
+    setJustSaved(false);
+  }
 
-    if (isFirstReleve && !form.date_ancien_releve) {
-      return 'Pour le premier relevé, la date du relevé précédent est obligatoire.';
+  function annulerCorrection() {
+    setEditReleveId(null);
+    datePrecedenteModifiee.current = false;
+    loadHistory(selectedCompteur);
+    setError('');
+    setDateError('');
+    setDatePrecedenteError('');
+  }
+
+  function validateForm() {
+    setDateError('');
+    setDateVisiteError('');
+    setDatePrecedenteError('');
+
+    const dateReleveAValider = editReleveId ? form.date_releve : dateReleveAutomatique;
+
+    if (!form.compteur_id) return 'Veuillez sélectionner un compteur.';
+    if (missionQuery && !mission) return 'Cette mission ne vous est pas attribuée ou n’est plus disponible.';
+    if (missionQuery && mission && !isMissionTerrainDate(mission)) {
+      setDateError('Aucune date de descente valide n’est disponible pour cette mission dans le calendrier de la campagne.');
+      return 'La date réelle du relevé est indisponible pour cette mission. Vérifiez le planning auprès du Responsable.';
     }
-    if (isFirstReleve && form.ancien_index === '') {
-      return 'Pour le premier relevé, l’ancien index est obligatoire.';
+    if (mission && (!isValidInputDate(form.date_visite_reelle) || form.date_visite_reelle > getToday())) {
+      setDateVisiteError('La date réelle de visite doit être valide et ne peut pas être future.');
+      return 'Renseignez une date réelle de visite valide, qui ne peut pas être future.';
     }
-    if (isFirstReleve && Number(form.ancien_index) < 0) {
-      return 'L’ancien index doit être supérieur ou égal à zéro.';
+    if (!isValidInputDate(dateReleveAValider)) {
+      setDateError('Choisissez la date réelle du relevé.');
+      return 'La date du relevé actuel est obligatoire et doit être valide.';
     }
-    if (form.nouvel_index === '') return 'Veuillez saisir le nouvel index.';
+    if (missionQuery && dateReleveAValider > getToday()) {
+      setDateError('La date de la mission est future et ne peut pas encore être utilisée.');
+      return 'Le relevé ne peut pas être enregistré avant la journée planifiée de la mission.';
+    }
+    if (dateReleveAValider > getEndOfNextMonth()) {
+      setDateError('Choisissez une date au plus tard à la fin du mois prochain.');
+      return 'La date du relevé actuel ne peut pas dépasser la fin du mois prochain.';
+    }
+    const dateInstallation = toInputDate(currentCompteur?.date_installation);
+    if (dateInstallation && dateReleveAValider < dateInstallation) {
+      setDateError('La date du premier relevé ne peut pas être antérieure à la date d’installation du compteur.');
+      return 'La date du relevé ne peut pas être antérieure à l’installation du compteur.';
+    }
+    if (
+      modeNouveauReleve &&
+      dernierReleve &&
+      dateReleveAValider <= toInputDate(dernierReleve.date_releve)
+    ) {
+      setDateError(`La date du relevé actuel doit être postérieure au dernier relevé valide (${formatDate(dernierReleve.date_releve)}).`);
+      return 'La date du relevé actuel ne peut pas précéder ni répéter le dernier relevé valide.';
+    }
+    if (!isInitialMode) {
+      if (!isValidInputDate(form.date_ancien_releve)) {
+        setDatePrecedenteError('La date du relevé précédent est invalide.');
+        return 'La date du relevé précédent est obligatoire et doit être valide.';
+      }
+      if (dateInstallation && form.date_ancien_releve < dateInstallation) {
+        setDatePrecedenteError('La date du relevé précédent ne peut pas être antérieure à l’installation du compteur.');
+        return 'La date du relevé précédent est antérieure à l’installation du compteur.';
+      }
+      if (releveAvantSaisie && form.date_ancien_releve > toInputDate(releveAvantSaisie.date_releve)) {
+        setDatePrecedenteError('La date du relevé précédent ne peut pas être postérieure au dernier relevé valide de ce compteur.');
+        return 'La date du relevé précédent dépasse le dernier relevé valide de ce compteur.';
+      }
+      if (form.date_ancien_releve >= dateReleveAValider) {
+        setDatePrecedenteError('Choisissez une date antérieure au relevé actuel.');
+        return 'La date du relevé précédent doit être antérieure à la date du relevé actuel.';
+      }
+    }
+    if (form.nouvel_index === '' || !Number.isFinite(Number(form.nouvel_index))) return 'Veuillez saisir un index valide.';
     if (Number(form.nouvel_index) < 0) {
       return 'Le nouvel index doit être supérieur ou égal à zéro.';
     }
-    if (
-      form.date_ancien_releve &&
-      form.date_releve &&
-      form.date_ancien_releve >= form.date_releve
-    ) {
-      return 'La date du relevé précédent doit être antérieure à la date du relevé actuel.';
-    }
-    if (form.ancien_index !== '' && Number(form.nouvel_index) < Number(form.ancien_index)) {
+    if (!isInitialMode && form.ancien_index !== '' && Number(form.nouvel_index) < Number(form.ancien_index)) {
       return 'Le nouvel index doit être supérieur ou égal à l’ancien index.';
     }
     return '';
@@ -352,36 +833,65 @@ function AgentRelevesPage() {
       setError('');
       setSaved(null);
 
+      const currentEditId = editReleveId;
       const knownIds = new Set(historique.map((item) => item.id));
-
-      const payload = {
-        compteur_id: Number(form.compteur_id),
-        date_ancien_releve: form.date_ancien_releve || null,
-        date_releve: form.date_releve,
-        ancien_index: form.ancien_index === '' ? null : Number(form.ancien_index),
+      const relevePayload = {
+        date_releve: currentEditId ? form.date_releve : dateReleveAutomatique,
         nouvel_index: Number(form.nouvel_index),
+        observation: form.observation?.trim() || null,
+        ...(!isInitialMode ? {
+          date_ancien_releve: form.date_ancien_releve,
+        } : {}),
       };
-
-      const response = await axiosClient.post('/agent/releves', payload);
+      const response = currentEditId
+        ? await axiosClient.put(`/agent/releves/${currentEditId}`, relevePayload)
+        : await axiosClient.post('/agent/releves', {
+            compteur_id: Number(form.compteur_id),
+            ...relevePayload,
+            ...(mission ? {
+              mission_id: Number(mission.id),
+              date_visite_reelle: form.date_visite_reelle,
+            } : {}),
+          });
       if (response.data?.status !== 'success') {
         throw new Error(response.data?.message || 'Impossible d’enregistrer le relevé.');
       }
 
+      datePrecedenteModifiee.current = false;
       const data = await loadHistory(form.compteur_id, { silent: true, knownIds });
-      const fresh = data?.find((item) => !knownIds.has(item.id));
+      const fresh = currentEditId
+        ? data?.find((item) => Number(item.id) === Number(currentEditId))
+        : data?.find((item) => !knownIds.has(item.id));
+      setEditReleveId(null);
 
       setSaved({
         consommation: fresh?.consommation ?? null,
         unite: fresh?.unite || unite,
+        updated: Boolean(currentEditId),
+        isInitial: fresh?.type_releve === 'INITIAL' || isInitialMode,
+        mission: Boolean(mission) && !currentEditId,
+        index: Number(form.nouvel_index),
       });
       setJustSaved(true);
     } catch (requestError) {
       console.error('Erreur création relevé Agent :', requestError);
-      setError(
+      const serverMessage =
         requestError.response?.data?.message ||
-          requestError.message ||
-          'Impossible d’enregistrer le relevé.'
-      );
+        requestError.message ||
+        'Impossible d’enregistrer le relevé.';
+      if (/date du relevé précédent|date de référence du premier relevé/i.test(serverMessage)) {
+        setDatePrecedenteError(serverMessage);
+        setError('');
+      } else if (/date|chronolog/i.test(serverMessage)) {
+        if (/date réelle de visite/i.test(serverMessage)) {
+          setDateVisiteError(serverMessage);
+        } else {
+          setDateError(serverMessage);
+        }
+        setError('');
+      } else {
+        setError(serverMessage);
+      }
     } finally {
       setSaving(false);
     }
@@ -395,6 +905,223 @@ function AgentRelevesPage() {
   }
 
   const flash = rollKey > 0 ? 'rv-flash' : '';
+
+  async function generateRelevePDF(releve) {
+    try {
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 10;
+      const contentWidth = pageWidth - margin * 2;
+      const blue = [0, 78, 145];
+      const orange = [235, 119, 0];
+      const border = [90, 130, 175];
+      const dark = [30, 45, 65];
+      const formatIndex = (value) => {
+        if (value === null || value === undefined || value === '') return '—';
+        const number = Number(value);
+        return Number.isFinite(number) ? number.toLocaleString('fr-FR') : '—';
+      };
+      const type = String(releve.type_compteur || currentCompteur?.type || '').toUpperCase();
+      const unit = releve.unite || (type === 'EAU' ? 'm³' : 'kWh');
+      const typeLabel = type === 'EAU' ? 'Eau' : 'Électricité';
+      const subscriber = `${currentCompteur?.abonne_prenom || releve.abonne_prenom || ''} ${
+        currentCompteur?.abonne_nom || releve.abonne_nom || ''
+      }`.trim();
+      const text = (value) => String(value ?? '—');
+      const historyRows = historique
+        .filter((entry) => Number(entry.id) !== Number(releve.id))
+        .slice(0, 3);
+
+      try {
+        const response = await fetch(`${import.meta.env.BASE_URL}images/Jirama.png`);
+        if (response.ok) {
+          const image = await response.blob();
+          const logo = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(new Error('Lecture du logo impossible.'));
+            reader.readAsDataURL(image);
+          });
+          doc.addImage(logo, 'PNG', margin, 5, 28, 18);
+        } else {
+          doc.setTextColor(...blue);
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(15);
+          doc.text('JIRAMA', margin, 16);
+        }
+      } catch (logoError) {
+        console.warn('Logo JIRAMA indisponible pour le PDF du relevé :', logoError);
+        doc.setTextColor(...blue);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(15);
+        doc.text('JIRAMA', margin, 16);
+      }
+
+      doc.setDrawColor(...blue);
+      doc.setLineWidth(0.45);
+      doc.line(margin, 26, pageWidth - margin, 26);
+      doc.setTextColor(...blue);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(13);
+      doc.text('SUIVI DES CONSOMMATIONS', pageWidth / 2 + 12, 10, { align: 'center' });
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.text('RELEVÉ DE COMPTEUR · DOCUMENT NON OFFICIEL', pageWidth / 2 + 12, 16, {
+        align: 'center',
+      });
+      doc.setTextColor(...dark);
+      doc.setFontSize(8);
+      doc.text(`Référence : REL-${releve.id}`, pageWidth - margin, 23, { align: 'right' });
+      doc.text(`Date du relevé : ${formatDate(releve.date_releve)}`, margin, 32);
+      doc.text(`Service : ${typeLabel}`, pageWidth / 2, 32);
+
+      const infoY = 36;
+      const infoHeight = 32;
+      const halfWidth = contentWidth / 2;
+      doc.setDrawColor(...border);
+      doc.rect(margin, infoY, contentWidth, infoHeight);
+      doc.line(pageWidth / 2, infoY, pageWidth / 2, infoY + infoHeight);
+      doc.setFillColor(236, 243, 250);
+      doc.rect(margin, infoY, halfWidth, 6, 'F');
+      doc.rect(pageWidth / 2, infoY, halfWidth, 6, 'F');
+      doc.setTextColor(...blue);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.text('TITULAIRE DU COMPTE', margin + 2, infoY + 4.2);
+      doc.text('COMPTEUR', pageWidth / 2 + 2, infoY + 4.2);
+      doc.setTextColor(...dark);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.text(`Nom : ${subscriber || 'Non renseigné'}`, margin + 2, infoY + 12);
+      doc.text(`Référence abonné : ${text(currentCompteur?.numero_abonne)}`, margin + 2, infoY + 18);
+      const adresseLines = doc.splitTextToSize(
+        `Adresse : ${text(currentCompteur?.abonne_adresse)}`,
+        halfWidth - 5
+      );
+      doc.text(adresseLines.slice(0, 2), margin + 2, infoY + 24);
+      doc.text(`N° compteur : ${text(currentCompteur?.numero_compteur)}`, pageWidth / 2 + 2, infoY + 12);
+      doc.text(`Type : ${typeLabel}`, pageWidth / 2 + 2, infoY + 18);
+      doc.text(`Unité de mesure : ${unit}`, pageWidth / 2 + 2, infoY + 24);
+
+      const titleY = 76;
+      doc.setTextColor(...blue);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.text('DÉTAIL DU RELEVÉ', margin, titleY);
+
+      const tableY = titleY + 3;
+      const tableHeight = 19;
+      const columnWidths = [contentWidth * 0.2, contentWidth * 0.2, contentWidth * 0.2, contentWidth * 0.2, contentWidth * 0.2];
+      const columnTitles = ['DATE', 'ANCIEN INDEX', 'NOUVEL INDEX', 'CONSOMMATION', 'UNITÉ'];
+      const columnValues = [
+        formatDate(releve.date_releve),
+        formatIndex(releve.ancien_index),
+        formatIndex(releve.nouvel_index),
+        formatIndex(releve.consommation),
+        unit,
+      ];
+      let columnX = margin;
+      doc.setFillColor(...blue);
+      doc.rect(margin, tableY, contentWidth, 8, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6.5);
+      columnTitles.forEach((title, index) => {
+        const width = columnWidths[index];
+        doc.text(title, columnX + width / 2, tableY + 5.2, { align: 'center' });
+        if (index > 0) doc.line(columnX, tableY, columnX, tableY + tableHeight);
+        columnX += width;
+      });
+      doc.setDrawColor(...border);
+      doc.rect(margin, tableY, contentWidth, tableHeight);
+      doc.line(margin, tableY + 8, pageWidth - margin, tableY + 8);
+      doc.setTextColor(...dark);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      columnX = margin;
+      columnValues.forEach((value, index) => {
+        const width = columnWidths[index];
+        doc.text(text(value), columnX + width / 2, tableY + 14, { align: 'center' });
+        columnX += width;
+      });
+
+      let sectionY = tableY + tableHeight + 10;
+      doc.setTextColor(...blue);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.text('HISTORIQUE DES RELEVÉS PRÉCÉDENTS', margin, sectionY);
+      sectionY += 3;
+      const historyHeaderHeight = 7;
+      const historyRowHeight = 8;
+      const historyWidths = [contentWidth * 0.4, contentWidth * 0.3, contentWidth * 0.3];
+      const historyLabels = ['DATE', 'INDEX', `CONSOMMATION (${unit})`];
+      let hx = margin;
+      doc.setFillColor(236, 243, 250);
+      doc.rect(margin, sectionY, contentWidth, historyHeaderHeight, 'F');
+      doc.setDrawColor(...border);
+      doc.rect(margin, sectionY, contentWidth, historyHeaderHeight + historyRowHeight * Math.max(historyRows.length, 1));
+      doc.setTextColor(...blue);
+      doc.setFontSize(6.5);
+      historyLabels.forEach((label, index) => {
+        const width = historyWidths[index];
+        doc.text(label, hx + 2, sectionY + 4.7);
+        if (index > 0) doc.line(hx, sectionY, hx, sectionY + historyHeaderHeight + historyRowHeight * Math.max(historyRows.length, 1));
+        hx += width;
+      });
+      doc.setDrawColor(...border);
+      doc.line(margin, sectionY + historyHeaderHeight, pageWidth - margin, sectionY + historyHeaderHeight);
+      doc.setTextColor(...dark);
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      if (historyRows.length === 0) {
+        doc.text('Aucun relevé antérieur disponible.', margin + 2, sectionY + historyHeaderHeight + 5);
+      } else {
+        historyRows.forEach((entry, index) => {
+          const rowY = sectionY + historyHeaderHeight + historyRowHeight * index;
+          if (index > 0) {
+            doc.setDrawColor(...border);
+            doc.line(margin, rowY, pageWidth - margin, rowY);
+          }
+          doc.text(formatDate(entry.date_releve), margin + 2, rowY + 5.2);
+          doc.text(formatIndex(entry.nouvel_index), margin + historyWidths[0] + 2, rowY + 5.2);
+          doc.text(
+            `${formatIndex(entry.consommation)} ${entry.unite || unit}`,
+            margin + historyWidths[0] + historyWidths[1] + 2,
+            rowY + 5.2
+          );
+        });
+      }
+
+      sectionY += historyHeaderHeight + historyRowHeight * Math.max(historyRows.length, 1) + 10;
+      doc.setDrawColor(...border);
+      doc.line(margin, sectionY, pageWidth - margin, sectionY);
+      doc.setTextColor(...orange);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.text('DOCUMENT DE RELEVÉ — NON VALABLE COMME FACTURE', margin, sectionY + 6);
+      doc.setTextColor(...dark);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.text(
+        'Les tarifs, taxes, paiements et montants de facture ne sont pas inclus dans les données disponibles.',
+        margin,
+        sectionY + 12
+      );
+
+      const footerY = Math.max(sectionY + 24, pageHeight - 14);
+      doc.setDrawColor(...blue);
+      doc.line(margin, footerY - 5, pageWidth - margin, footerY - 5);
+      doc.setTextColor(...blue);
+      doc.setFontSize(7);
+      doc.text(`Référence relevé : ${releve.id}`, margin, footerY);
+      doc.text('JIRAMA · Suivi des consommations', pageWidth - margin, footerY, { align: 'right' });
+      doc.save(`releve-jirama-${releve.id}.pdf`);
+    } catch (pdfError) {
+      console.error('Erreur génération PDF du relevé Agent :', pdfError);
+      setError('Impossible de générer le PDF du relevé.');
+    }
+  }
 
   /* ------------------------------ rendu ------------------------------- */
 
@@ -411,9 +1138,9 @@ function AgentRelevesPage() {
             </div>
             <div>
               <h2 id="releve-form-title" className="font-bold text-slate-900">
-                Nouveau relevé
+                {editReleveId ? `Corriger le relevé #${editReleveId}` : 'Nouveau relevé'}
               </h2>
-              <p className="text-sm text-slate-500">Saisie sécurisée par le serveur.</p>
+              <p className="text-sm text-slate-500">{isInitialMode ? "Initialisation du compteur à partir de l’index réellement constaté." : "Saisie sécurisée par le serveur."}</p>
             </div>
           </div>
 
@@ -428,10 +1155,15 @@ function AgentRelevesPage() {
                   id="releve-compteur"
                   value={selectedCompteur}
                   onChange={handleCompteurChange}
-                  disabled={loading || saving}
+                  disabled={loading || saving || Boolean(missionQuery)}
                   className={`${FIELD_EDIT} disabled:opacity-60`}
                 >
                   <option value="">Sélectionner un compteur</option>
+                  {selectedCompteur && !currentCompteur && (
+                    <option value={selectedCompteur}>
+                      Compteur #{selectedCompteur} — introuvable ou indisponible
+                    </option>
+                  )}
                   {compteurs.map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.numero_compteur}
@@ -470,53 +1202,311 @@ function AgentRelevesPage() {
               )}
             </div>
 
-            {/* Relevé précédent : verrouillé, repris de l'historique */}
-            <section className="space-y-3 border-t border-slate-100 pt-5">
-              <div className="flex items-baseline justify-between gap-3">
-                <h3 className={SECTION_TITLE}>Relevé précédent</h3>
-                <span className="text-xs text-slate-500">
-                  {isFirstReleve ? 'Premier relevé : à renseigner' : 'Repris du dernier relevé'}
-                </span>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label htmlFor="releve-ancien-index" className={LABEL}>
-                    Ancien index
-                  </label>
-                  <input
-                    key={`ancien-${rollKey}`}
-                    id="releve-ancien-index"
-                    type="number"
-                    min="0"
-                    step="any"
-                    inputMode="decimal"
-                    name="ancien_index"
-                    value={form.ancien_index}
-                    onChange={handleChange}
-                    readOnly={!isFirstReleve}
-                    disabled={saving}
-                    className={`${isFirstReleve ? FIELD_EDIT : FIELD_LOCKED} font-semibold tabular-nums ${flash}`}
-                  />
+            {currentCompteur && (
+              <section
+                className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4"
+                aria-labelledby="disponibilite-dates-title"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <h3 id="disponibilite-dates-title" className={SECTION_TITLE}>
+                      Disponibilité des dates de relevé
+                    </h3>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Calculée à partir de l’historique réel du compteur {currentCompteur.numero_compteur}.
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
+                    {historyLoading ? 'Chargement…' : `${historique.length} relevé(s)`}
+                  </span>
                 </div>
 
+                <dl className="grid gap-2 text-sm sm:grid-cols-2">
+                  <div className="flex items-start gap-2">
+                    <span
+                      aria-hidden="true"
+                      className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${TONS_DATE.vert.puce}`}
+                    />
+                    <div className="min-w-0">
+                      <dt className="text-xs text-slate-500">Dernier relevé enregistré</dt>
+                      <dd className="font-semibold text-slate-800">
+                        {!historyReady
+                          ? '—'
+                          : dernierReleve
+                            ? `${formatDate(dernierReleve.date_releve)} · index ${formatNumber(dernierReleve.nouvel_index)}`
+                            : 'Aucun relevé enregistré'}
+                      </dd>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-2">
+                    <span
+                      aria-hidden="true"
+                      className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${TONS_DATE.neutre.puce}`}
+                    />
+                    <div className="min-w-0">
+                      <dt className="text-xs text-slate-500">Relevé précédent</dt>
+                      <dd className="font-semibold text-slate-800">
+                        {!historyReady
+                          ? '—'
+                          : relevePrecedent
+                            ? formatDate(relevePrecedent.date_releve)
+                            : 'Aucun relevé antérieur'}
+                      </dd>
+                    </div>
+                  </div>
+                </dl>
+
                 <div>
-                  <label htmlFor="releve-date-precedent" className={LABEL}>
-                    Date du relevé précédent
-                  </label>
+                  <p className="text-xs text-slate-500">Dates déjà utilisées pour ce compteur</p>
+                  {!historyReady ? (
+                    <p className="mt-1 text-sm text-slate-600">—</p>
+                  ) : historique.length === 0 ? (
+                    <p className="mt-1 text-sm text-slate-600">
+                      Aucune date utilisée : le prochain relevé sera le relevé initial du compteur.
+                    </p>
+                  ) : (
+                    <ul className="mt-1.5 flex flex-wrap gap-1.5">
+                      {historique.slice(0, 6).map((item) => (
+                        <li
+                          key={`date-utilisee-${item.id}`}
+                          className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold tabular-nums text-slate-600"
+                        >
+                          {formatDate(item.date_releve)}
+                        </li>
+                      ))}
+                      {historique.length > 6 && (
+                        <li className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-500">
+                          +{historique.length - 6}
+                        </li>
+                      )}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                  <div className="flex items-start gap-2">
+                    <span
+                      aria-hidden="true"
+                      className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+                        prochaineDatePossible ? TONS_DATE.vert.puce : TONS_DATE.neutre.puce
+                      }`}
+                    />
+                    <div className="min-w-0">
+                      <p className="text-xs text-slate-500">Prochaine date possible</p>
+                      <p className="text-sm font-semibold text-slate-800">
+                        {!historyReady
+                          ? '—'
+                          : prochaineDatePossible
+                            ? formatDate(prochaineDatePossible)
+                            : 'Indisponible : aucune date acceptée dans la fenêtre autorisée'}
+                      </p>
+                    </div>
+                  </div>
+
+                </div>
+
+                <p className="text-xs leading-5 text-slate-500">
+                  La date actuelle est fixée automatiquement au jour de la saisie. Une même date peut être
+                  utilisée pour plusieurs abonnés : seul un doublon concernant le même compteur est refusé.
+                </p>
+              </section>
+            )}
+
+            {mission && (
+              <section className="space-y-2 border-t border-slate-100 pt-5" aria-label="Mission attribuée">
+                <h3 className={SECTION_TITLE}>Mission de contrôle</h3>
+                <p className="text-sm font-semibold text-slate-800">Mission #{mission.id} · {mission.statut}</p>
+
+                {missionDejaTraitee && (
+                  <div
+                    role="status"
+                    className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+                  >
+                    <p className="font-bold">Mission déjà traitée</p>
+                    <p className="mt-1">
+                      {mission.releve_id
+                        ? `Cette mission possède déjà un relevé enregistré le ${formatDate(
+                            mission.date_releve_realisee
+                          )}.`
+                        : 'Cette mission possède déjà un relevé enregistré. La date de ce relevé est indisponible.'}
+                    </p>
+
+                    <dl className="mt-2 grid gap-1 text-xs sm:grid-cols-2">
+                      <div>
+                        <dt className="text-amber-800">Compteur</dt>
+                        <dd className="font-semibold">
+                          {mission.numero_compteur || currentCompteur?.numero_compteur || '—'}
+                        </dd>
+                      </div>
+
+                      <div>
+                        <dt className="text-amber-800">Abonné</dt>
+                        <dd className="font-semibold">
+                          {`${mission.abonne_prenom || ''} ${mission.abonne_nom || ''}`.trim() || '—'}
+                          {' · '}
+                          {mission.numero_abonne || '—'}
+                        </dd>
+                      </div>
+
+                      <div>
+                        <dt className="text-amber-800">Type de relevé</dt>
+                        <dd className="font-semibold">
+                          {mission.type_releve === 'INITIAL'
+                            ? 'Initial (sans consommation)'
+                            : mission.type_releve || '—'}
+                        </dd>
+                      </div>
+
+                      {releveDeLaMission?.ancien_index !== null &&
+                        releveDeLaMission?.ancien_index !== undefined && (
+                          <div>
+                            <dt className="text-amber-800">Ancien index</dt>
+                            <dd className="font-semibold tabular-nums">
+                              {formatNumber(releveDeLaMission.ancien_index)}
+                            </dd>
+                          </div>
+                        )}
+
+                      <div>
+                        <dt className="text-amber-800">Nouvel index enregistré</dt>
+                        <dd className="font-semibold tabular-nums">
+                          {mission.index_releve !== null && mission.index_releve !== undefined
+                            ? formatNumber(mission.index_releve)
+                            : '—'}
+                        </dd>
+                      </div>
+
+                      <div>
+                        <dt className="text-amber-800">Consommation</dt>
+                        <dd className="font-semibold tabular-nums">
+                          {mission.consommation_releve !== null &&
+                          mission.consommation_releve !== undefined
+                            ? `${formatNumber(mission.consommation_releve)} ${unite}`
+                            : 'Non calculée'}
+                        </dd>
+                      </div>
+                    </dl>
+
+                    <p className="mt-2 text-xs">
+                      Aucune nouvelle saisie n’est possible pour cette mission. Consultez l’historique du compteur pour
+                      vérifier le relevé transmis.
+                    </p>
+                  </div>
+                )}
+                <p className="text-sm text-slate-600">
+                  {[mission.abonne_prenom, mission.abonne_nom].filter(Boolean).join(' ') || 'Abonné'}
+                  {' · '}{mission.numero_abonne || 'Référence indisponible'}
+                </p>
+                <p className="text-sm text-slate-600">{mission.adresse || 'Adresse incomplète'} · {mission.quartier || 'Quartier non renseigné'}</p>
+                <p className="text-xs text-slate-500">
+                  Date de visite prévue : {formatDate(mission.date_prevue)} · Dernier index valide :{' '}
+                  {mission.dernier_index !== null && mission.dernier_index !== undefined
+                    ? Number(mission.dernier_index).toLocaleString('fr-FR')
+                    : 'non disponible'}
+                  {mission.dernier_releve ? ` (relevé du ${formatDate(mission.dernier_releve)})` : ''}.
+                </p>
+                {!missionDejaTraitee && (
+                <div>
+                  <label htmlFor="mission-date-visite-reelle" className={LABEL}>Date réelle de visite</label>
                   <input
-                    key={`date-${rollKey}`}
-                    id="releve-date-precedent"
+                    id="mission-date-visite-reelle"
                     type="date"
-                    name="date_ancien_releve"
-                    value={form.date_ancien_releve}
-                    onChange={handleChange}
-                    readOnly={!isFirstReleve}
-                    disabled={saving}
-                    className={`${isFirstReleve ? FIELD_EDIT : FIELD_LOCKED} ${flash}`}
+                    value={form.date_visite_reelle}
+                    max={getToday()}
+                    onChange={(event) => {
+                      setForm((previous) => ({
+                        ...previous,
+                        date_visite_reelle: event.target.value,
+                      }));
+                      setDateVisiteError('');
+                      setError('');
+                    }}
+                    disabled={saving || missionLoading || Boolean(missionQuery && !mission)}
+                    aria-invalid={Boolean(dateVisiteError)}
+                    aria-describedby={dateVisiteError ? 'mission-date-visite-error' : undefined}
+                    className={`${FIELD_EDIT} ${dateVisiteError ? 'border-red-400 focus:border-red-500' : ''}`}
                   />
+                  {dateVisiteError && (
+                    <p id="mission-date-visite-error" className="mt-1 text-xs font-medium text-red-700">{dateVisiteError}</p>
+                  )}
                 </div>
+                )}
+              </section>
+            )}
+
+            {missionError && (
+              <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+                {missionError}
               </div>
+            )}
+
+            {/* Référence précédente ou initialisation d'un nouveau compteur */}
+            <section className="space-y-3 border-t border-slate-100 pt-5">
+              {isInitialMode ? (
+                <div role="status" className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-4 text-sm text-blue-900">
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="font-bold uppercase tracking-wider">Premier relevé — initialisation du compteur</h3>
+                    <span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-bold text-blue-800">Nouveau</span>
+                  </div>
+                  <p className="mt-2">
+                    Aucun relevé n’est encore enregistré pour ce compteur. Saisissez l’index réellement affiché sur le compteur. Il deviendra la référence des prochains relevés.
+                  </p>
+                  <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                    <div>
+                      <dt className="text-blue-700">Date d’installation enregistrée</dt>
+                      <dd className="font-semibold">{formatDateInstallation(currentCompteur?.date_installation)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-blue-700">Abonné</dt>
+                      <dd className="font-semibold">{`${currentCompteur?.abonne_prenom || ''} ${currentCompteur?.abonne_nom || ''}`.trim() || 'Non renseigné'} · {currentCompteur?.numero_abonne || '—'}</dd>
+                    </div>
+                  </dl>
+                  <p className="mt-3 text-xs text-blue-800">La date d’installation n’est pas utilisée comme date de relevé. Aucune ancienne date, aucun ancien index et aucune consommation ne seront inventés.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <h3 className={SECTION_TITLE}>Relevé précédent</h3>
+                    <span className="text-xs text-slate-500">Repris du dernier relevé valide</span>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <label htmlFor="releve-ancien-index" className={LABEL}>Ancien index</label>
+                      <input
+                        key={`ancien-${rollKey}`}
+                        id="releve-ancien-index"
+                        type="number"
+                        min="0"
+                        step="any"
+                        inputMode="decimal"
+                        name="ancien_index"
+                        value={form.ancien_index}
+                        readOnly
+                        disabled={saving}
+                        className={`${FIELD_LOCKED} font-semibold tabular-nums ${flash}`}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="releve-date-precedent" className={LABEL}>Date du relevé précédent</label>
+                      <input
+                        key={`date-${rollKey}`}
+                        id="releve-date-precedent"
+                        type="date"
+                        name="date_ancien_releve"
+                        value={form.date_ancien_releve}
+                        max={datePrecedenteMax || undefined}
+                        onChange={handleChange}
+                        disabled={saving || !historyReady}
+                        aria-invalid={Boolean(datePrecedenteError)}
+                        aria-describedby={datePrecedenteError ? 'releve-date-precedent-error' : undefined}
+                        className={`${FIELD_EDIT} ${datePrecedenteError ? 'border-red-400 focus:border-red-500' : ''} ${flash} disabled:cursor-not-allowed disabled:opacity-60`}
+                      />
+                      {datePrecedenteError && <p id="releve-date-precedent-error" className="mt-1 text-xs font-medium text-red-700">{datePrecedenteError}</p>}
+                    </div>
+                  </div>
+                </>
+              )}
             </section>
 
             {/* Relevé actuel : la zone active */}
@@ -526,7 +1516,7 @@ function AgentRelevesPage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <label htmlFor="releve-nouvel-index" className={LABEL}>
-                    Nouvel index
+                    {isInitialMode ? 'Index initial réellement constaté' : 'Nouvel index'}
                   </label>
                   <input
                     id="releve-nouvel-index"
@@ -537,7 +1527,7 @@ function AgentRelevesPage() {
                     name="nouvel_index"
                     value={form.nouvel_index}
                     onChange={handleChange}
-                    disabled={saving || !historyReady}
+                    disabled={saving || !historyReady || Boolean(missionQuery && !mission)}
                     placeholder="Ex. 1253"
                     aria-invalid={previewState === 'invalid'}
                     className={`${FIELD} bg-white py-3.5 text-lg font-bold tabular-nums text-slate-900 ${
@@ -550,38 +1540,108 @@ function AgentRelevesPage() {
 
                 <div>
                   <label htmlFor="releve-date" className={LABEL}>
-                    Date du relevé actuel
+                    {isInitialMode ? 'Date réelle du premier relevé' : 'Date du relevé actuel'}
                   </label>
                   <input
                     id="releve-date"
                     type="date"
                     name="date_releve"
-                    value={form.date_releve}
-                    max={getToday()}
+                    value={editReleveId ? form.date_releve : dateReleveAutomatique}
+                    max={getEndOfNextMonth()}
+                    disabled
+                    aria-invalid={Boolean(dateError)}
+                    aria-describedby={
+                      dateError ? 'releve-date-error releve-date-disponibilite' : 'releve-date-disponibilite'
+                    }
+                    className={`${FIELD_LOCKED} ${dateError ? 'border-red-400' : ''}`}
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    {editReleveId
+                      ? 'Date historique du relevé conservée lors de la correction. Non modifiable par l’agent.'
+                      : missionQuery
+                        ? 'Date de la descente planifiée pour cette mission. Non modifiable par l’agent.'
+                        : 'Date automatique du jour (fuseau Africa/Antananarivo). Non modifiable par l’agent.'}
+                  </p>
+                  {missionQuery && mission && !isMissionTerrainDate(mission) && (
+                    <p role="alert" className="mt-1 text-xs font-medium text-red-700">
+                      Aucune date de descente valide n’est disponible pour cette mission dans le calendrier de la campagne. L’enregistrement est bloqué.
+                    </p>
+                  )}
+
+                  <div
+                    id="releve-date-disponibilite"
+                    role="status"
+                    aria-live="polite"
+                    className={`mt-2 rounded-lg border px-2.5 py-2 text-xs leading-5 ${TONS_DATE[etatDateSaisie.ton].boite}`}
+                  >
+                    <p className="flex items-start gap-1.5">
+                      {etatDateSaisie.ton === 'jaune' ? (
+                        <TriangleAlert size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-yellow-700" />
+                      ) : (
+                        <span
+                          aria-hidden="true"
+                          className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${TONS_DATE[etatDateSaisie.ton].puce}`}
+                        />
+                      )}
+                      <span>{etatDateSaisie.texte}</span>
+                    </p>
+
+                    {modeNouveauReleve && historyReady && (
+                      <p className="mt-1 text-[11px] opacity-90">
+                        Dernier relevé :{' '}
+                        {dernierReleve ? formatDate(dernierReleve.date_releve) : 'aucun (relevé initial)'}
+                        {' · '}
+                        {missionQuery ? 'Date de mission : ' : 'Date proposée : '}
+                        {missionQuery
+                          ? dateReleveSaisie ? formatDate(dateReleveSaisie) : 'indisponible'
+                          : prochaineDatePossible ? formatDate(prochaineDatePossible) : 'indisponible'}
+                      </p>
+                    )}
+                  </div>
+
+                  {dateError && <p id="releve-date-error" className="mt-1 text-xs font-medium text-red-700">{dateError}</p>}
+                </div>
+              </div>
+
+              {isInitialMode ? (
+                <div aria-live="polite" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  <p className="font-bold">Consommation non calculée pour ce premier relevé</p>
+                  <p className="mt-1 text-xs">Cet index initial servira de base de comparaison lors du prochain relevé périodique.</p>
+                </div>
+              ) : (
+                <>
+                  <div aria-live="polite" className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-3 transition-colors duration-200 ${PREVIEW[previewState].box}`}>
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold uppercase tracking-wider">Consommation estimée</p>
+                      <p className="mt-0.5 text-xs">{PREVIEW[previewState].hint}</p>
+                    </div>
+                    <p className="shrink-0 text-xl font-black tabular-nums">
+                      {delta === null || delta < 0 ? '—' : `${formatNumber(delta)} ${unite}`}
+                    </p>
+                  </div>
+                  <p className="flex items-start gap-2 text-xs leading-5 text-slate-500">
+                    <Info size={14} className="mt-0.5 shrink-0 text-blue-600" />
+                    Le nouvel index doit être supérieur ou égal au dernier index enregistré.
+                  </p>
+                </>
+              )}
+
+              {isInitialMode && (
+                <div>
+                  <label htmlFor="releve-observation-initiale" className={LABEL}>Observation (facultative)</label>
+                  <textarea
+                    id="releve-observation-initiale"
+                    name="observation"
+                    value={form.observation || ''}
                     onChange={handleChange}
+                    rows={2}
+                    maxLength={2000}
                     disabled={saving}
-                    className={FIELD_EDIT}
+                    placeholder="Précisez, si nécessaire, les conditions de la première lecture ou une remarque sur l’installation."
+                    className={`${FIELD_EDIT} min-h-[76px] resize-y`}
                   />
                 </div>
-              </div>
-
-              <div
-                aria-live="polite"
-                className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-3 transition-colors duration-200 ${PREVIEW[previewState].box}`}
-              >
-                <div className="min-w-0">
-                  <p className="text-xs font-bold uppercase tracking-wider">Consommation</p>
-                  <p className="mt-0.5 text-xs">{PREVIEW[previewState].hint}</p>
-                </div>
-                <p className="shrink-0 text-xl font-black tabular-nums">
-                  {delta === null || delta < 0 ? '—' : `${formatNumber(delta)} ${unite}`}
-                </p>
-              </div>
-
-              <p className="flex items-start gap-2 text-xs leading-5 text-slate-500">
-                <Info size={14} className="mt-0.5 shrink-0 text-blue-600" />
-                Le nouvel index doit être supérieur ou égal à l’ancien.
-              </p>
+              )}
             </section>
 
             {/* Retour d'état, à côté du bouton qui l'a déclenché */}
@@ -602,12 +1662,30 @@ function AgentRelevesPage() {
               >
                 <CheckCircle2 size={18} className="mt-0.5 shrink-0" />
                 <div className="min-w-0 flex-1">
-                  <p className="font-semibold">Relevé enregistré avec succès.</p>
+                  <p className="font-semibold">{saved.updated ? 'Relevé corrigé avec succès.' : 'Relevé enregistré avec succès.'}</p>
                   <p className="mt-0.5">
-                    {saved.consommation != null
-                      ? `Consommation calculée : ${formatNumber(saved.consommation)} ${saved.unite || ''}`
-                      : 'La consommation a été calculée automatiquement.'}
+                    {saved.isInitial
+                      ? 'Premier index initialisé. Aucune consommation par différence n’a été calculée.'
+                      : saved.consommation != null
+                        ? `Consommation calculée : ${formatNumber(saved.consommation)} ${saved.unite || ''}`
+                        : 'La consommation est indisponible ; vérifiez les données du relevé.'}
                   </p>
+                  {saved.mission && (
+                    <div className="mt-2">
+                      <p className="font-semibold">Votre intervention a été enregistrée et transmise au Responsable.</p>
+                      <p className="mt-0.5">
+                        Index réel transmis : {Number(saved.index).toLocaleString('fr-FR')} · la mission apparaît comme terminée dans vos contrôles.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/dashboard/agent/missions')}
+                        className="mt-1.5 inline-flex items-center gap-1 text-xs font-bold underline underline-offset-2"
+                      >
+                        Voir mes contrôles
+                        <ArrowRight size={13} />
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <button
                   type="button"
@@ -622,7 +1700,15 @@ function AgentRelevesPage() {
 
             <button
               type="submit"
-              disabled={saving || loading || !historyReady}
+              disabled={
+                saving ||
+                loading ||
+                missionLoading ||
+                !historyReady ||
+                missionDejaTraitee ||
+                Boolean(missionQuery && !mission) ||
+                Boolean(missionQuery && mission && !isMissionTerrainDate(mission))
+              }
               className={`inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold text-white transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-blue-300 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 ${
                 justSaved ? 'bg-emerald-600' : 'bg-blue-600 hover:bg-blue-700'
               }`}
@@ -640,10 +1726,20 @@ function AgentRelevesPage() {
               ) : (
                 <>
                   <Save size={18} />
-                  Enregistrer le relevé
+                  {editReleveId ? 'Enregistrer la correction' : isInitialMode ? 'Enregistrer le premier relevé' : 'Enregistrer le relevé'}
                 </>
               )}
             </button>
+            {editReleveId && (
+              <button
+                type="button"
+                onClick={annulerCorrection}
+                disabled={saving}
+                className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Annuler la correction
+              </button>
+            )}
           </form>
         </section>
 
@@ -712,18 +1808,44 @@ function AgentRelevesPage() {
                                 )}
                               </p>
                               <p className="mt-1 flex items-center gap-1.5 text-sm tabular-nums text-slate-600">
-                                {formatNumber(item.ancien_index)}
-                                <ArrowRight size={14} className="text-slate-400" />
-                                <span className="font-bold text-slate-900">
-                                  {formatNumber(item.nouvel_index)}
-                                </span>
+                                {item.type_releve === 'INITIAL' ? (
+                                  <span className="font-semibold text-blue-700">Index initial : {formatNumber(item.nouvel_index)}</span>
+                                ) : (
+                                  <>
+                                    {formatNumber(item.ancien_index)}
+                                    <ArrowRight size={14} className="text-slate-400" />
+                                    <span className="font-bold text-slate-900">{formatNumber(item.nouvel_index)}</span>
+                                  </>
+                                )}
                               </p>
+                              {item.type_releve === 'INITIAL' && <p className="mt-1 text-xs text-slate-500">Aucune consommation calculée</p>}
                               <p className="mt-1 text-xs text-slate-500">Relevé #{item.id}</p>
                             </div>
 
-                            <span className="shrink-0 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold tabular-nums text-blue-700">
-                              {formatNumber(item.consommation)} {item.unite || ''}
-                            </span>
+                            <div className="flex shrink-0 flex-col items-end gap-2">
+                              <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold tabular-nums text-blue-700">
+                                {item.type_releve === 'INITIAL' || item.consommation == null ? 'Non calculée' : `${formatNumber(item.consommation)} ${item.unite || ''}`}
+                              </span>
+                              <div className="flex flex-wrap justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => generateRelevePDF(item)}
+                                  className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-xs font-semibold text-blue-800 hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+                                  aria-label={`Télécharger le PDF du relevé ${item.id}`}
+                                >
+                                  <FileText size={13} />PDF / Facture
+                                </button>
+                                {!missionQuery && Number(item.created_by) === currentUserId && (
+                                  <button
+                                    type="button"
+                                    onClick={() => commencerCorrection(item)}
+                                    className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+                                  >
+                                    <Pencil size={13} />Corriger
+                                  </button>
+                                )}
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </li>

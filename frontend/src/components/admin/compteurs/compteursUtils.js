@@ -56,8 +56,23 @@ export function versDate(valeur) {
 }
 
 export function formatDate(valeur) {
-  const date = versDate(valeur);
-  return date ? date.toLocaleDateString('fr-FR') : '';
+  if (!valeur) return '';
+  const correspondance = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(valeur).slice(0, 10));
+  if (!correspondance) return '';
+  const annee = Number(correspondance[1]);
+  const mois = Number(correspondance[2]);
+  const jour = Number(correspondance[3]);
+  const verification = new Date(Date.UTC(annee, mois - 1, jour));
+  if (
+    verification.getUTCFullYear() !== annee ||
+    verification.getUTCMonth() !== mois - 1 ||
+    verification.getUTCDate() !== jour
+  ) return '';
+  const moisFrancais = [
+    'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+    'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre',
+  ];
+  return `${jour} ${moisFrancais[mois - 1]} ${annee}`;
 }
 
 // Valeur pour <input type="date"> : AAAA-MM-JJ

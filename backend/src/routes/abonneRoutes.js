@@ -8,6 +8,7 @@ const {
   createAbonne,
   updateAbonne,
   updateAbonneStatus,
+  deleteAbonne,
 } = require('../controllers/abonneController');
 
 const {
@@ -68,6 +69,14 @@ router.patch(
   verifyToken,
   checkRole('ADMINISTRATEUR'),
   updateAbonneStatus
+);
+
+// Supprimer définitivement un abonné et ses données opérationnelles propres.
+router.delete(
+  '/:id',
+  verifyToken,
+  checkRole('ADMINISTRATEUR'),
+  deleteAbonne
 );
 
 module.exports = router;
